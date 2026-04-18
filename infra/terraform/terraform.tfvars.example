@@ -10,6 +10,16 @@ environment = "staging"        # staging | production
 # Leave empty for real AWS (LocalStack sets this to "http://localstack:4566")
 aws_endpoint = ""
 
+# ── Networking ───────────────────────────────────────────────────────────────
+# Three subnet tiers — all lists must match the number of availability_zones.
+#   public             → ALB (internet-facing)
+#   private_app        → ASG / EC2 instances (egress via NAT)
+#   private (data)     → RDS + ElastiCache (no internet access)
+availability_zones       = ["ap-southeast-1a", "ap-southeast-1b"]
+public_subnet_cidrs      = ["10.0.1.0/24", "10.0.2.0/24"]
+private_app_subnet_cidrs = ["10.0.3.0/24", "10.0.4.0/24"]
+private_subnet_cidrs     = ["10.0.5.0/24", "10.0.6.0/24"]
+
 # ── EC2 / ASG ────────────────────────────────────────────────────────────────
 # Use Amazon Linux 2023 AMI for your region:
 #   aws ec2 describe-images --owners amazon \
@@ -49,4 +59,6 @@ zalopay_callback_url = "https://your-domain.com/api/payments/callback"
 tile_server_url = "http://localhost:7800"
 
 # ── Admin ────────────────────────────────────────────────────────────────────
-admin_secret = ""
+admin_secret   = ""
+redis_password = ""  # Set a strong password for ElastiCache AUTH in production
+
