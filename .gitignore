@@ -36,3 +36,14 @@ mem.prof
 *.log
 tmp/
 .tmp/
+
+# Terraform
+infra/terraform/.terraform/
+infra/terraform/terraform.tfstate
+infra/terraform/terraform.tfstate.backup
+infra/terraform/terraform.tfstate.localstack.bak
+infra/terraform/terraform.tfvars
+!infra/terraform/terraform.tfvars.example
+
+# Local env overrides
+.env.localstack
