@@ -1,14 +1,12 @@
 # Smatch-Go
 
-Smatch-Go is the backend service for a badminton court booking and match-making platform. It powers court discovery, nearby search, booking management, match creation and joining, payment processing, and authenticated user workflows for a connected sports community.
+Smatch-Go is the backend service for a badminton court booking and match-making platform. It supports court discovery, nearby search, booking management, match creation and joining, payment processing, and authenticated user workflows for a connected sports community.
 
 ## Overview
 
-The service is written in Go and follows a layered architecture with HTTP handlers, services, repositories, and platform-specific integrations. It exposes a JSON REST API, WebSocket endpoints for real-time updates, and a proxy endpoint for map tiles.
+Smatch-Go provides the server-side API for a system that helps players find badminton courts, book time slots, create or join matches, and complete payments in a single flow. It exposes a JSON REST API, WebSocket endpoints for real-time updates, and a map tile proxy for court visualization.
 
-The application starts by loading configuration, connecting to PostgreSQL, optionally connecting to Redis, initializing Firebase authentication, setting up ZaloPay and S3 clients, and then serving the API over HTTP.
-
-## Key Features
+Main capabilities:
 
 - Court listing, detail retrieval, creation, update, and deletion
 - Nearby court search using PostgreSQL/PostGIS geospatial queries
@@ -23,134 +21,48 @@ The application starts by loading configuration, connecting to PostgreSQL, optio
 
 ## Tech Stack
 
-- Go 1.23
-- chi router
-- PostgreSQL with PostGIS
-- Redis
-- Firebase Admin SDK
-- ZaloPay integration
-- AWS S3
-- Gorilla WebSocket
-- Zap logging
-- robfig/cron background jobs
+- Language: Go 1.23 for the backend API and service orchestration.
+- HTTP framework: chi router for routing, middleware, and request handling.
+- Database: PostgreSQL with PostGIS for court data, bookings, matches, and geospatial search.
+- Cache and rate limiting: Redis for slot locking, caching, and IP-based throttling when available.
+- Authentication: Firebase Admin SDK for token verification and authenticated user flows.
+- Payment: ZaloPay for booking and match payment processing.
+- Real-time communication: Gorilla WebSocket for live payment and match updates.
+- Logging: Zap for structured application logging.
+- Background jobs: robfig/cron for scheduled cleanup and maintenance tasks.
+- File storage: AWS S3 for profile media and match media uploads.
 
-## Architecture
+## Infrastructure
 
-The codebase is organized into a small number of focused layers:
+The system follows the architecture shown in the diagram supplied with the PR.
 
-- `cmd/server` boots the application and wires dependencies together.
-- `internal/config` loads environment variables and default values.
-- `internal/handler` contains HTTP handlers for auth, courts, bookings, matches, payments, search, proxy, and WebSockets.
-- `internal/service` contains business logic such as availability handling, Redis helpers, and scheduled background jobs.
-- `internal/repository` contains database access logic.
-- `internal/middleware` handles authentication and authorization.
-- `internal/domain` contains domain entities and enums.
-- `internal/dto` contains request and response models.
-- `internal/websocket` contains the WebSocket hub and channel management.
-- `platform` contains integration clients for PostgreSQL, Redis, Firebase, S3, and ZaloPay.
-- `migrations` contains the SQL schema files.
+### Architecture Diagram
 
-## Project Structure
+The client layer includes a React web application and Flutter mobile applications for iOS and Android. These clients resolve the API domain through Route 53 and send traffic to an Application Load Balancer.
 
-- `cmd/server` - application entry point
-- `internal/config` - configuration loading and defaults
-- `internal/domain` - core domain models and enums
-- `internal/dto` - request and response payloads
-- `internal/handler` - HTTP handlers and API endpoints
-- `internal/middleware` - auth and access control middleware
-- `internal/repository` - data access layer
-- `internal/service` - business logic and scheduled jobs
-- `internal/websocket` - real-time hub and WebSocket handling
-- `platform` - external service clients and integrations
-- `migrations` - SQL schema migrations
+The backend application runs on EC2 instances inside a private application subnet, managed by an Auto Scaling Group. The instances pull the application image from Amazon ECR and serve the API on port 3000 behind the ALB.
 
-## Prerequisites
+The data layer runs in private subnets and includes:
 
-Before running the service, make sure you have:
+- Amazon RDS for PostgreSQL as the primary database
+- Amazon ElastiCache for Redis for caching and slot locking
+- Amazon S3 buckets for profile images and match media
 
-- Go 1.23 or later
-- PostgreSQL with PostGIS enabled
-- Redis, if you want caching and Redis-based rate limiting
-- A Firebase service account JSON file
-- ZaloPay merchant credentials
-- Optional AWS credentials for S3 support
-- Optional tile server for map proxy requests
+External integrations shown in the diagram include Firebase for authentication and notifications, Mapbox for map services, and ZaloPay for payment callbacks and payment confirmation.
 
-## Configuration
+The infrastructure is provisioned with Terraform under [infra/terraform](infra/terraform).
 
-Create a `.env` file in the project root and set the required values for your environment.
+### AWS Services Used
 
-### Required or commonly used variables
-
-| Variable | Description | Default |
-| --- | --- | --- |
-| `PORT` | HTTP server port | `3000` |
-| `NODE_ENV` | Application environment | `development` |
-| `DATABASE_URL` | PostgreSQL connection string | none |
-| `FIREBASE_CREDENTIALS_FILE` | Path to the Firebase Admin SDK JSON file | `smatch-badminton-firebase-adminsdk-fbsvc-fb65abab30.json` |
-| `ADMIN_SECRET` | Shared secret for admin-protected routes | none |
-| `TILE_SERVER_URL` | Map tile server URL | `http://localhost:7800` |
-| `TILE_LAYER_ID` | Tile layer name | `public.courts` |
-| `SLOT_LOCK_TTL_SECONDS` | Slot lock lifetime in seconds | `600` |
-
-### Redis
-
-| Variable | Description | Default |
-| --- | --- | --- |
-| `REDIS_HOST` | Redis host | `localhost` |
-| `REDIS_PORT` | Redis port | `6379` |
-| `REDIS_PASSWORD` | Redis password | empty |
-| `REDIS_TLS_ENABLED` | Enable TLS for Redis | `false` |
-
-### ZaloPay
-
-| Variable | Description | Default |
-| --- | --- | --- |
-| `ZALOPAY_APP_ID` | ZaloPay application ID | none |
-| `ZALOPAY_KEY1` | ZaloPay secret key 1 | none |
-| `ZALOPAY_KEY2` | ZaloPay secret key 2 | none |
-| `ZALOPAY_ENDPOINT` | ZaloPay API endpoint | `https://sb-openapi.zalopay.vn` |
-| `ZALOPAY_CALLBACK_URL` | Callback URL for payment notifications | none |
-
-### AWS and S3
-
-| Variable | Description | Default |
-| --- | --- | --- |
-| `AWS_REGION` | AWS region | `us-east-1` |
-| `AWS_ACCESS_KEY_ID` | AWS access key ID | `test` |
-| `AWS_SECRET_ACCESS_KEY` | AWS secret access key | `test` |
-| `AWS_ENDPOINT` | Optional S3-compatible endpoint | empty |
-| `AWS_S3_BUCKET_PROFILE` | Bucket for profile images | `smatch-profiles` |
-| `AWS_S3_BUCKET_MATCHES` | Bucket for match images | `smatch-matches` |
-
-## Run Locally
-
-1. Clone the repository and enter the project folder.
-2. Install Go dependencies.
-3. Prepare PostgreSQL with PostGIS and create the database referenced by `DATABASE_URL`.
-4. Apply the SQL files in `migrations/` using your preferred PostgreSQL migration tool or client.
-5. Create a `.env` file with the configuration values above.
-6. Start the server.
-
-Example commands:
-
-```bash
-go mod download
-go run ./cmd/server
-```
-
-The server listens on the port defined by `PORT`, which defaults to `3000`.
-
-## Run with Docker
-
-The repository includes a multi-stage Dockerfile.
-
-```bash
-docker build -t smatch-go .
-docker run --rm -p 3000:3000 --env-file .env smatch-go
-```
-
-Make sure the container can reach PostgreSQL, Redis, Firebase credentials, and any other external services it depends on.
+- Route 53 for domain routing to the API
+- Application Load Balancer for public traffic entry and health checks
+- EC2 Auto Scaling Group for backend application instances
+- Amazon ECR for storing the backend Docker image
+- Amazon RDS PostgreSQL for persistent relational data
+- Amazon ElastiCache Redis for cache and lock storage
+- Amazon S3 for file assets such as profile and match images
+- VPC, public subnets, private application subnets, and private data subnets for network isolation
+- ACM and Route 53 DNS validation when domain-based HTTPS is enabled
 
 ## API Highlights
 
@@ -218,7 +130,7 @@ Make sure the container can reach PostgreSQL, Redis, Firebase credentials, and a
 
 ## Testing
 
-The repository includes Go tests under `internal/handler` and `internal/service`. Run the full suite with:
+Run the test suite with:
 
 ```bash
 go test ./...
@@ -226,18 +138,124 @@ go test ./...
 
 ## Deployment Notes
 
-- The server uses graceful shutdown on SIGINT and SIGTERM.
-- Redis is optional, but features such as caching, rate limiting, and some match/payment flows work best when Redis is available.
-- PostgreSQL should be provisioned with the PostGIS extension enabled before the application starts.
-- The Docker image exposes port `3000`.
-- Production deployments should provide a valid Firebase service account file and real payment credentials.
+- The backend is designed to run behind an Application Load Balancer.
+- RDS PostgreSQL and ElastiCache Redis are placed in private subnets.
+- EC2 backend instances are managed by an Auto Scaling Group.
+- Redis is optional for local development, but recommended for production behavior.
+- Production deployments should provide real Firebase, ZaloPay, AWS, and domain configuration values.
 
 ## Notes
 
-- The application reads a `.env` file automatically when present.
-- If Redis is unavailable, the application can still start, but some features degrade gracefully.
-- The S3 client is initialized in the server bootstrap and is currently reserved for media-related features.
+- The server reads `.env` automatically when present.
+- The S3 client is initialized in the bootstrap flow and is ready for media-related features.
+- The application shuts down gracefully on SIGINT and SIGTERM.
 
 ## License
 
 This repository does not currently include an explicit license file. Add one if the project is intended for public distribution.
+
+## Setup Guide
+
+### 1. Install prerequisites
+
+Before setting up the project, make sure you have:
+
+- Go 1.23 or later
+- Docker and Docker Compose if you want to run the backend in a container
+- Terraform 1.6 or later
+- AWS CLI configured with the correct profile
+- A PostgreSQL database with PostGIS support
+- Redis if you want cache, lock, and rate-limiting support
+- Firebase service account credentials
+- ZaloPay merchant credentials
+
+### 2. Install project dependencies
+
+```bash
+go mod download
+```
+
+### 3. Configure local application settings
+
+Create a `.env` file in the project root and fill in the values required by `internal/config/config.go`.
+
+Important variables include:
+
+- `DATABASE_URL`
+- `FIREBASE_CREDENTIALS_FILE`
+- `ZALOPAY_APP_ID`
+- `ZALOPAY_KEY1`
+- `ZALOPAY_KEY2`
+- `ZALOPAY_CALLBACK_URL`
+- `REDIS_HOST`
+- `REDIS_PORT`
+- `REDIS_PASSWORD`
+- `REDIS_TLS_ENABLED`
+- `AWS_REGION`
+- `AWS_ACCESS_KEY_ID`
+- `AWS_SECRET_ACCESS_KEY`
+- `AWS_ENDPOINT`
+- `AWS_S3_BUCKET_PROFILE`
+- `AWS_S3_BUCKET_MATCHES`
+- `TILE_SERVER_URL`
+- `TILE_LAYER_ID`
+- `ADMIN_SECRET`
+
+### 4. Prepare the database
+
+Apply the SQL migrations in [migrations](migrations) to your PostgreSQL instance before starting the application.
+
+### 5. Run the backend locally
+
+```bash
+go run ./cmd/server
+```
+
+The server listens on the port defined by `PORT` and exposes `/health`, `/version`, the REST API, and WebSocket endpoints.
+
+### 6. Run the infrastructure with Terraform
+
+The Terraform configuration lives in [infra/terraform](infra/terraform).
+
+The infrastructure provisions the AWS stack shown in the diagram:
+
+- Route 53 for DNS
+- Application Load Balancer in a public subnet
+- EC2 Auto Scaling Group for the backend application
+- Amazon ECR for the backend image
+- Amazon RDS PostgreSQL in a private data subnet
+- Amazon ElastiCache Redis in a private data subnet
+- Amazon S3 buckets for profile and match media
+- VPC, public subnets, private application subnets, and private data subnets
+
+Typical Terraform workflow:
+
+```bash
+cd infra/terraform
+terraform init
+terraform plan \
+	-var="db_password=YOUR_DB_PASSWORD" \
+	-var="ami_id=YOUR_AMI_ID" \
+	-var="ecr_repo_url=YOUR_ECR_REPOSITORY_URL" \
+	-var="zalopay_app_id=YOUR_ZALOPAY_APP_ID" \
+	-var="zalopay_key1=YOUR_ZALOPAY_KEY1" \
+	-var="zalopay_key2=YOUR_ZALOPAY_KEY2"
+terraform apply \
+	-var="db_password=YOUR_DB_PASSWORD" \
+	-var="ami_id=YOUR_AMI_ID" \
+	-var="ecr_repo_url=YOUR_ECR_REPOSITORY_URL" \
+	-var="zalopay_app_id=YOUR_ZALOPAY_APP_ID" \
+	-var="zalopay_key1=YOUR_ZALOPAY_KEY1" \
+	-var="zalopay_key2=YOUR_ZALOPAY_KEY2"
+```
+
+If you use a real domain, also set `domain_name` and `create_dns=true` so Terraform can create the DNS records and ACM certificate.
+
+### 7. Run with Docker
+
+```bash
+docker build -t smatch-go .
+docker run --rm -p 3000:3000 --env-file .env smatch-go
+```
+
+The container image copies the compiled server binary and the migration files into the runtime image.
