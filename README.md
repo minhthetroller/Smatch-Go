@@ -1,5 +1,3 @@
-<img src="docs/images/diagram.png" alt="System Design" width="100%"></img>
-
 # Smatch-Go
 
 Smatch-Go is the backend service for a badminton court booking and match-making platform. It supports court discovery, nearby search, booking management, match creation and joining, payment processing, and authenticated user workflows for a connected sports community.
@@ -23,20 +21,20 @@ Main capabilities:
 
 ## Tech Stack
 
-- Language: Go 1.23 for the backend API and service orchestration.
-- HTTP framework: chi router for routing, middleware, and request handling.
-- Database: PostgreSQL with PostGIS for court data, bookings, matches, and geospatial search.
-- Cache and rate limiting: Redis for slot locking, caching, and IP-based throttling when available.
-- Authentication: Firebase Admin SDK for token verification and authenticated user flows.
-- Payment: ZaloPay for booking and match payment processing.
-- Real-time communication: Gorilla WebSocket for live payment and match updates.
-- Logging: Zap for structured application logging.
-- Background jobs: robfig/cron for scheduled cleanup and maintenance tasks.
-- File storage: AWS S3 for profile media and match media uploads.
+- Language: Go 1.23
+- HTTP framework: chi router
+- Database: PostgreSQL with PostGIS
+- Cache and rate limiting: Redis
+- Authentication: Firebase Admin SDK
+- Payment: ZaloPay
+- Real-time communication: Gorilla WebSocket
+- Logging: Zap
+- Background jobs: robfig/cron
+- File storage: AWS S3
 
 ## Infrastructure
 
-The system follows the architecture shown in the diagram supplied with the PR.
+<img src="docs/images/diagram.png" alt="System Design" width="100%"></img>
 
 ### Architecture Diagram
 
@@ -66,95 +64,6 @@ The infrastructure is provisioned with Terraform under [infra/terraform](infra/t
 - VPC, public subnets, private application subnets, and private data subnets for network isolation
 - ACM and Route 53 DNS validation when domain-based HTTPS is enabled
 
-## API Highlights
-
-### Health and metadata
-
-- `GET /health` - health check
-- `GET /version` - version information
-
-### Authentication
-
-- `POST /api/auth/verify`
-- `POST /api/auth/anonymous`
-- `GET /api/auth/me`
-- `PUT /api/auth/me`
-- `DELETE /api/auth/me`
-- `GET /api/auth/me/bookings`
-
-### Courts and availability
-
-- `GET /api/courts`
-- `GET /api/courts/nearby`
-- `GET /api/courts/{id}`
-- `GET /api/courts/{courtId}/availability`
-- `POST /api/courts` for admins
-- `PUT /api/courts/{id}` for admins
-- `DELETE /api/courts/{id}` for admins
-
-### Bookings and payments
-
-- `POST /api/bookings`
-- `GET /api/bookings/{id}`
-- `DELETE /api/bookings/{id}`
-- `GET /api/bookings/{id}/payment`
-- `POST /api/payments/create`
-- `POST /api/payments/callback`
-- `GET /api/payments/{id}`
-- `GET /api/payments/{id}/status`
-- `POST /api/payments/{id}/cancel`
-
-### Matches
-
-- `GET /api/matches`
-- `GET /api/matches/{id}`
-- `POST /api/matches`
-- `PUT /api/matches/{id}`
-- `DELETE /api/matches/{id}`
-- `POST /api/matches/{id}/join`
-- `DELETE /api/matches/{id}/leave`
-- `GET /api/matches/{id}/requests`
-- `PUT /api/matches/{id}/requests/{playerId}/respond`
-
-### Search and admin
-
-- `GET /api/search/autocomplete`
-- `GET /api/search/courts`
-- `GET /api/search/popular`
-- `POST /api/admin/search/reindex`
-- `GET /api/admin/search/stats`
-
-### WebSockets and map tiles
-
-- `GET /ws/payments`
-- `GET /ws/matches`
-- `GET /map-tiles/{z}/{x}/{y}.pbf`
-
-## Testing
-
-Run the test suite with:
-
-```bash
-go test ./...
-```
-
-## Deployment Notes
-
-- The backend is designed to run behind an Application Load Balancer.
-- RDS PostgreSQL and ElastiCache Redis are placed in private subnets.
-- EC2 backend instances are managed by an Auto Scaling Group.
-- Redis is optional for local development, but recommended for production behavior.
-- Production deployments should provide real Firebase, ZaloPay, AWS, and domain configuration values.
-
-## Notes
-
-- The server reads `.env` automatically when present.
-- The S3 client is initialized in the bootstrap flow and is ready for media-related features.
-- The application shuts down gracefully on SIGINT and SIGTERM.
-
-## License
-
-This repository does not currently include an explicit license file. Add one if the project is intended for public distribution.
 
 ## Setup Guide
 
