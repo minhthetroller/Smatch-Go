@@ -11,8 +11,16 @@ systemctl enable --now docker
 aws ecr get-login-password --region ${aws_region} \
   | docker login --username AWS --password-stdin ${ecr_repo_url}
 
-# ── Pull the latest backend image ─────────────────────────────────────────────
-docker pull ${ecr_repo_url}:latest
+# ── Pull the backend image ───────────────────────────────────────────────────
+docker pull ${ecr_repo_url}:${image_tag}
+
+# ── Fetch Firebase credentials from Secrets Manager ──────────────────────────
+aws secretsmanager get-secret-value \
+  --region ${aws_region} \
+  --secret-id smatch/firebase/credentials \
+  --query SecretString \
+  --output text > /etc/firebase-adminsdk.json
+chmod 600 /etc/firebase-adminsdk.json
 
 # ── Write environment file (chmod 600 so only root can read secrets) ──────────
 cat > /etc/smatch.env <<EOF
@@ -25,7 +33,7 @@ REDIS_TLS_ENABLED=true
 AWS_REGION=${aws_region}
 AWS_S3_BUCKET_PROFILE=${s3_bucket_profile}
 AWS_S3_BUCKET_MATCHES=${s3_bucket_matches}
-FIREBASE_CREDENTIALS_FILE=${firebase_creds_file}
+FIREBASE_CREDENTIALS_FILE=/app/firebase-adminsdk.json
 ZALOPAY_APP_ID=${zalopay_app_id}
 ZALOPAY_KEY1=${zalopay_key1}
 ZALOPAY_KEY2=${zalopay_key2}
@@ -42,5 +50,6 @@ docker run -d \
   --name smatch-backend \
   --restart unless-stopped \
   --env-file /etc/smatch.env \
+  -v /etc/firebase-adminsdk.json:/app/firebase-adminsdk.json:ro \
   -p ${backend_port}:${backend_port} \
-  ${ecr_repo_url}:latest
+  ${ecr_repo_url}:${image_tag}
