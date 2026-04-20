@@ -1,3 +1,5 @@
+<img src="docs/images/diagram.png" alt="System Design" width="300"></img>
+
 # Smatch-Go
 
 Smatch-Go is the backend service for a badminton court booking and match-making platform. It supports court discovery, nearby search, booking management, match creation and joining, payment processing, and authenticated user workflows for a connected sports community.
