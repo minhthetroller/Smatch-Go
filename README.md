@@ -213,7 +213,49 @@ go run ./cmd/server
 
 The server listens on the port defined by `PORT` and exposes `/health`, `/version`, the REST API, and WebSocket endpoints.
 
-### 6. Run the infrastructure with Terraform
+### 6. Build and push the Docker image to AWS ECR
+
+Before deploying to AWS, you need to build the backend Docker image and push it to Amazon ECR. This image will be pulled by EC2 instances in the Auto Scaling Group.
+
+First, create an ECR repository (if not already created):
+
+```bash
+aws ecr create-repository \
+	--repository-name smatch-backend \
+	--region ap-southeast-1
+```
+
+Then, build the Docker image:
+
+```bash
+docker build -t smatch-go .
+```
+
+Log in to Amazon ECR:
+
+```bash
+aws ecr get-login-password --region ap-southeast-1 | docker login --username AWS --password-stdin YOUR_AWS_ACCOUNT_ID.dkr.ecr.ap-southeast-1.amazonaws.com
+```
+
+Tag the image with the ECR repository URL:
+
+```bash
+docker tag smatch-go:latest YOUR_AWS_ACCOUNT_ID.dkr.ecr.ap-southeast-1.amazonaws.com/smatch-backend:latest
+```
+
+Push the image to ECR:
+
+```bash
+docker push YOUR_AWS_ACCOUNT_ID.dkr.ecr.ap-southeast-1.amazonaws.com/smatch-backend:latest
+```
+
+Save the full ECR image URL for use with Terraform:
+
+```bash
+YOUR_AWS_ACCOUNT_ID.dkr.ecr.ap-southeast-1.amazonaws.com/smatch-backend:latest
+```
+
+### 7. Run the infrastructure with Terraform
 
 The Terraform configuration lives in [infra/terraform](infra/terraform).
 
@@ -228,6 +270,8 @@ The infrastructure provisions the AWS stack shown in the diagram:
 - Amazon S3 buckets for profile and match media
 - VPC, public subnets, private application subnets, and private data subnets
 
+After pushing the Docker image to ECR, proceed with Terraform. Note that the `ecr_repo_url` variable must point to your pushed image URL.
+
 Typical Terraform workflow:
 
 ```bash
@@ -236,14 +280,14 @@ terraform init
 terraform plan \
 	-var="db_password=YOUR_DB_PASSWORD" \
 	-var="ami_id=YOUR_AMI_ID" \
-	-var="ecr_repo_url=YOUR_ECR_REPOSITORY_URL" \
+	-var="ecr_repo_url=YOUR_AWS_ACCOUNT_ID.dkr.ecr.ap-southeast-1.amazonaws.com/smatch-backend:latest" \
 	-var="zalopay_app_id=YOUR_ZALOPAY_APP_ID" \
 	-var="zalopay_key1=YOUR_ZALOPAY_KEY1" \
 	-var="zalopay_key2=YOUR_ZALOPAY_KEY2"
 terraform apply \
 	-var="db_password=YOUR_DB_PASSWORD" \
 	-var="ami_id=YOUR_AMI_ID" \
-	-var="ecr_repo_url=YOUR_ECR_REPOSITORY_URL" \
+	-var="ecr_repo_url=YOUR_AWS_ACCOUNT_ID.dkr.ecr.ap-southeast-1.amazonaws.com/smatch-backend:latest" \
 	-var="zalopay_app_id=YOUR_ZALOPAY_APP_ID" \
 	-var="zalopay_key1=YOUR_ZALOPAY_KEY1" \
 	-var="zalopay_key2=YOUR_ZALOPAY_KEY2"
@@ -251,10 +295,28 @@ terraform apply \
 
 If you use a real domain, also set `domain_name` and `create_dns=true` so Terraform can create the DNS records and ACM certificate.
 
-### 7. Run with Docker
+### 8. Monitor and manage the deployment
+
+Once Terraform completes successfully, the infrastructure is live. You can view the outputs (API URL, RDS endpoint, etc.) by running:
+
+```bash
+cd infra/terraform
+terraform output
+```
+
+### Optional: Run Locally with Docker
+
+If you want to test the backend application in a container without deploying to AWS:
+
+Build the Docker image:
 
 ```bash
 docker build -t smatch-go .
+```
+
+Run the container with your `.env` file:
+
+```bash
 docker run --rm -p 3000:3000 --env-file .env smatch-go
 ```
 
