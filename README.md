@@ -1,4 +1,4 @@
-<img src="docs/images/diagram.png" alt="System Design" width="300"></img>
+<img src="docs/images/diagram.png" alt="System Design" width="100%"></img>
 
 # Smatch-Go
 
