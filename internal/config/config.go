@@ -43,9 +43,12 @@ type Config struct {
 		Endpoint        string // optional: LocalStack override
 		BucketProfile   string
 		BucketMatches   string
+		BucketBusinessDocs string
 	}
 
-	AdminSecret string
+	AdminSecret   string
+	AdminPort     int
+	AdminWebOrigin string
 }
 
 func Load() *Config {
@@ -83,8 +86,11 @@ func Load() *Config {
 	cfg.AWS.Endpoint = getEnv("AWS_ENDPOINT", "")
 	cfg.AWS.BucketProfile = getEnv("AWS_S3_BUCKET_PROFILE", "smatch-profiles")
 	cfg.AWS.BucketMatches = getEnv("AWS_S3_BUCKET_MATCHES", "smatch-matches")
+	cfg.AWS.BucketBusinessDocs = getEnv("AWS_S3_BUCKET_BUSINESS_DOCS", "smatch-business-docs")
 
 	cfg.AdminSecret = getEnv("ADMIN_SECRET", "")
+	cfg.AdminPort = getEnvInt("ADMIN_PORT", 3001)
+	cfg.AdminWebOrigin = getEnv("ADMIN_WEB_ORIGIN", "https://admin-sb.online")
 
 	return cfg
 }

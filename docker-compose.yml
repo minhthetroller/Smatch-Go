@@ -1,0 +1,110 @@
+networks:
+  smatch-net:
+    driver: bridge
+
+services:
+
+  postgres:
+    image: postgres:15
+    environment:
+      POSTGRES_DB: smatch
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+    networks:
+      - smatch-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d smatch"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7
+    ports:
+      - "6379:6379"
+    networks:
+      - smatch-net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  pg_tileserv:
+    image: pramsey/pg_tileserv:latest
+    environment:
+      - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/smatch?sslmode=disable
+    ports:
+      - "7800:7800"
+    networks:
+      - smatch-net
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SERVICE: server
+    env_file: .env
+    environment:
+      - PORT=3000
+      - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/smatch?sslmode=disable
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - TILE_SERVER_URL=http://pg_tileserv:7800
+    volumes:
+      - ./smatch-badminton-firebase-adminsdk-fbsvc-fb65abab30.json:/app/smatch-badminton-firebase-adminsdk-fbsvc-fb65abab30.json:ro
+    ports:
+      - "3000:3000"
+    networks:
+      - smatch-net
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      pg_tileserv:
+        condition: service_started
+
+  admin:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SERVICE: admin-server
+    env_file: .env
+    environment:
+      - ADMIN_PORT=3001
+      - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/smatch?sslmode=disable
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - NODE_ENV=development
+      - ADMIN_WEB_ORIGIN=http://localhost:3001
+    volumes:
+      - ./smatch-badminton-firebase-adminsdk-fbsvc-fb65abab30.json:/app/smatch-badminton-firebase-adminsdk-fbsvc-fb65abab30.json:ro
+    ports:
+      - "3001:3001"
+    networks:
+      - smatch-net
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  nginx:
+    image: nginx:alpine
+    volumes:
+      - ./nginx/nginx.dev.conf:/etc/nginx/nginx.conf:ro
+    ports:
+      - "8080:8080"
+    networks:
+      - smatch-net
+    depends_on:
+      - backend
+      - pg_tileserv

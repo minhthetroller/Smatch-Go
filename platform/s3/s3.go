@@ -9,6 +9,7 @@ import (
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 )
 
 // Config holds AWS S3 settings.
@@ -17,15 +18,17 @@ type Config struct {
 	AccessKeyID     string
 	SecretAccessKey string
 	Endpoint        string // optional: LocalStack override
-	BucketProfile   string
-	BucketMatches   string
+	BucketProfile       string
+	BucketMatches       string
+	BucketBusinessDocs  string
 }
 
 // Client wraps the AWS S3 client.
 type Client struct {
-	s3            *s3.Client
-	BucketProfile string
-	BucketMatches string
+	s3                  *s3.Client
+	BucketProfile       string
+	BucketMatches       string
+	BucketBusinessDocs  string
 }
 
 // New creates an S3 client.
@@ -50,9 +53,10 @@ func New(ctx context.Context, cfg Config) (*Client, error) {
 	}
 
 	return &Client{
-		s3:            s3.NewFromConfig(awsCfg, s3Opts...),
-		BucketProfile: cfg.BucketProfile,
-		BucketMatches: cfg.BucketMatches,
+		s3:                 s3.NewFromConfig(awsCfg, s3Opts...),
+		BucketProfile:      cfg.BucketProfile,
+		BucketMatches:      cfg.BucketMatches,
+		BucketBusinessDocs: cfg.BucketBusinessDocs,
 	}, nil
 }
 
@@ -63,6 +67,18 @@ func (c *Client) PutObject(ctx context.Context, bucket, key string, body io.Read
 		Key:         aws.String(key),
 		Body:        body,
 		ContentType: aws.String(contentType),
+	})
+	return err
+}
+
+// PutObjectEncrypted uploads an object to S3 with server-side encryption.
+func (c *Client) PutObjectEncrypted(ctx context.Context, bucket, key string, body io.Reader, contentType string) error {
+	_, err := c.s3.PutObject(ctx, &s3.PutObjectInput{
+		Bucket:            aws.String(bucket),
+		Key:               aws.String(key),
+		Body:              body,
+		ContentType:       aws.String(contentType),
+		ServerSideEncryption: types.ServerSideEncryptionAes256,
 	})
 	return err
 }

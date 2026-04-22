@@ -66,9 +66,10 @@ resource "aws_launch_template" "admin" {
     redis_host             = aws_elasticache_cluster.main.cache_nodes[0].address
     redis_port             = tostring(aws_elasticache_cluster.main.port)
     redis_password         = var.redis_password
-    s3_bucket_profile      = aws_s3_bucket.profile.bucket
-    s3_bucket_matches      = aws_s3_bucket.matches.bucket
-    zalopay_app_id         = var.zalopay_app_id
+    s3_bucket_profile       = aws_s3_bucket.profile.bucket
+    s3_bucket_matches       = aws_s3_bucket.matches.bucket
+    s3_bucket_business_docs = aws_s3_bucket.business_docs.bucket
+    zalopay_app_id          = var.zalopay_app_id
     zalopay_key1           = var.zalopay_key1
     zalopay_key2           = var.zalopay_key2
     zalopay_endpoint       = var.zalopay_endpoint

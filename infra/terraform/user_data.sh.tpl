@@ -33,6 +33,7 @@ REDIS_TLS_ENABLED=true
 AWS_REGION=${aws_region}
 AWS_S3_BUCKET_PROFILE=${s3_bucket_profile}
 AWS_S3_BUCKET_MATCHES=${s3_bucket_matches}
+AWS_S3_BUCKET_BUSINESS_DOCS=${s3_bucket_business_docs}
 FIREBASE_CREDENTIALS_FILE=/app/firebase-adminsdk.json
 ZALOPAY_APP_ID=${zalopay_app_id}
 ZALOPAY_KEY1=${zalopay_key1}

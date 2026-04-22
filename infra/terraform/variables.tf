@@ -160,6 +160,12 @@ variable "s3_bucket_matches" {
   default     = "smatch-matches"
 }
 
+variable "s3_bucket_business_docs" {
+  description = "S3 bucket name for court owner business documents"
+  type        = string
+  default     = "smatch-business-docs"
+}
+
 # ── DNS / TLS ─────────────────────────────────────────────────────────────────
 
 variable "domain_name" {

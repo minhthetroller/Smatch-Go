@@ -20,11 +20,17 @@ const (
 type AuthMiddleware struct {
 	firebase    *firebasepkg.Client
 	userRepo    *repository.UserRepository
+	bpRepo      *repository.BusinessProfileRepository
 	adminSecret string
 }
 
 func NewAuthMiddleware(fb *firebasepkg.Client, ur *repository.UserRepository, adminSecret string) *AuthMiddleware {
 	return &AuthMiddleware{firebase: fb, userRepo: ur, adminSecret: adminSecret}
+}
+
+func (m *AuthMiddleware) WithBusinessProfileRepo(repo *repository.BusinessProfileRepository) *AuthMiddleware {
+	m.bpRepo = repo
+	return m
 }
 
 // extractBearerToken parses "Bearer <token>" from Authorization header.
@@ -120,7 +126,57 @@ func (m *AuthMiddleware) RequireAnonymousUser(next http.Handler) http.Handler {
 	})
 }
 
-// RequireAdmin checks Firebase custom claim `admin: true` OR static ADMIN_SECRET header.
+// RequireRole checks that the authenticated user has one of the required roles.
+func (m *AuthMiddleware) RequireRole(roles ...string) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			m.RequireAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				user := UserFromContext(r.Context())
+				if user == nil {
+					sendError(w, "Unauthorized", "UNAUTHORIZED", 401)
+					return
+				}
+				userRoles, err := m.userRepo.GetRoles(r.Context(), user.ID)
+				if err != nil {
+					sendError(w, "Failed to check roles", "INTERNAL_ERROR", 500)
+					return
+				}
+				for _, ur := range userRoles {
+					for _, rr := range roles {
+						if ur == rr {
+							next.ServeHTTP(w, r)
+							return
+						}
+					}
+				}
+				sendError(w, "Insufficient permissions", "FORBIDDEN", 403)
+			})).ServeHTTP(w, r)
+		})
+	}
+}
+
+// RequireCourtOwner requires auth, court_owner role, and approved business profile.
+func (m *AuthMiddleware) RequireCourtOwner(next http.Handler) http.Handler {
+	return m.RequireRole("court_owner")(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if m.bpRepo == nil {
+			sendError(w, "Business profile check unavailable", "INTERNAL_ERROR", 500)
+			return
+		}
+		user := UserFromContext(r.Context())
+		bp, err := m.bpRepo.FindByUserID(r.Context(), user.ID)
+		if err != nil {
+			sendError(w, "Failed to check business profile", "INTERNAL_ERROR", 500)
+			return
+		}
+		if bp == nil || bp.Status != "approved" {
+			sendError(w, "Business profile not approved", "FORBIDDEN", 403)
+			return
+		}
+		next.ServeHTTP(w, r)
+	}))
+}
+
+// RequireAdmin checks X-Admin-Secret, Firebase admin claim, or admin role.
 func (m *AuthMiddleware) RequireAdmin(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Check static admin secret header first.
@@ -128,7 +184,7 @@ func (m *AuthMiddleware) RequireAdmin(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
-		// Fall back to Firebase token with admin claim.
+		// Fall back to Firebase token with admin claim or admin role.
 		token := extractBearerToken(r.Header.Get("Authorization"))
 		if token == "" {
 			sendError(w, "Admin access required", "FORBIDDEN", 403)
@@ -139,10 +195,21 @@ func (m *AuthMiddleware) RequireAdmin(next http.Handler) http.Handler {
 			sendError(w, "Invalid or expired token", "INVALID_TOKEN", 401)
 			return
 		}
-		if admin, _ := decoded.Claims["admin"].(bool); !admin {
-			sendError(w, "Admin access required", "FORBIDDEN", 403)
+		if admin, _ := decoded.Claims["admin"].(bool); admin {
+			next.ServeHTTP(w, r)
 			return
 		}
-		next.ServeHTTP(w, r)
+		// Check roles array for admin
+		user, _ := m.userRepo.FindByFirebaseUID(r.Context(), decoded.UID)
+		if user != nil {
+			roles, _ := m.userRepo.GetRoles(r.Context(), user.ID)
+			for _, role := range roles {
+				if role == "admin" {
+					next.ServeHTTP(w, r)
+					return
+				}
+			}
+		}
+		sendError(w, "Admin access required", "FORBIDDEN", 403)
 	})
 }

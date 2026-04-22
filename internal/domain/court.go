@@ -22,6 +22,8 @@ type Court struct {
 	Lat *float64
 	Lng *float64
 
+	OwnerUserID *string
+
 	CreatedAt time.Time
 	UpdatedAt time.Time
 }
