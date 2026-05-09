@@ -232,3 +232,67 @@ variable "rate_limit_trusted_ips" {
   type        = string
   default     = ""
 }
+
+# ── Admin backend ASG ─────────────────────────────────────────────────────────
+
+variable "admin_domain_name" {
+  description = "Full domain name for the admin backend (e.g. admin-smb.online)"
+  type        = string
+  default     = ""
+}
+
+variable "admin_asg_min_size" {
+  description = "Minimum instances in admin ASG"
+  type        = number
+  default     = 1
+}
+
+variable "admin_asg_max_size" {
+  description = "Maximum instances in admin ASG"
+  type        = number
+  default     = 2
+}
+
+variable "admin_asg_desired_capacity" {
+  description = "Desired instances in admin ASG"
+  type        = number
+  default     = 1
+}
+
+# ── pg_tileserv ASG ───────────────────────────────────────────────────────────
+
+variable "tileserv_asg_min_size" {
+  description = "Minimum instances in tileserv ASG"
+  type        = number
+  default     = 1
+}
+
+variable "tileserv_asg_max_size" {
+  description = "Maximum instances in tileserv ASG"
+  type        = number
+  default     = 3
+}
+
+variable "tileserv_asg_desired_capacity" {
+  description = "Desired instances in tileserv ASG"
+  type        = number
+  default     = 2
+}
+
+variable "tileserv_port" {
+  description = "Port pg_tileserv binary listens on"
+  type        = number
+  default     = 7800
+}
+
+variable "tileserv_nginx_port" {
+  description = "Port nginx listens on for tileserv (the port ALB forwards to)"
+  type        = number
+  default     = 80
+}
+
+variable "pg_tileserv_version" {
+  description = "pg_tileserv release version to download from GitHub"
+  type        = string
+  default     = "1.0.11"
+}

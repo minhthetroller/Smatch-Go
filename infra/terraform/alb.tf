@@ -10,8 +10,9 @@ resource "aws_lb" "main" {
   tags = { Name = "${var.app_name}-alb" }
 }
 
-# ── Target Group ──────────────────────────────────────────────────────────────
+# ── Target Groups ─────────────────────────────────────────────────────────────
 
+# User backend
 resource "aws_lb_target_group" "backend" {
   name        = "${var.app_name}-tg-backend"
   port        = var.backend_port
@@ -34,39 +35,105 @@ resource "aws_lb_target_group" "backend" {
   tags = { Name = "${var.app_name}-tg-backend" }
 }
 
-# ── ACM Certificate ───────────────────────────────────────────────────────────
-# Only created when create_dns = true and domain_name is set.
+# Admin backend
+resource "aws_lb_target_group" "admin" {
+  name        = "${var.app_name}-tg-admin"
+  port        = var.backend_port
+  protocol    = "HTTP"
+  vpc_id      = aws_vpc.main.id
+  target_type = "instance"
+
+  health_check {
+    enabled             = true
+    path                = "/health"
+    protocol            = "HTTP"
+    port                = tostring(var.backend_port)
+    healthy_threshold   = 2
+    unhealthy_threshold = 3
+    timeout             = 5
+    interval            = 15
+    matcher             = "200"
+  }
+
+  tags = { Name = "${var.app_name}-tg-admin" }
+}
+
+# pg_tileserv (traffic hits nginx, nginx proxies to pg_tileserv on localhost:7800)
+resource "aws_lb_target_group" "tileserv" {
+  name        = "${var.app_name}-tg-tileserv"
+  port        = var.tileserv_nginx_port
+  protocol    = "HTTP"
+  vpc_id      = aws_vpc.main.id
+  target_type = "instance"
+
+  health_check {
+    enabled             = true
+    path                = "/public.courts/0/0/0.pbf"
+    protocol            = "HTTP"
+    port                = tostring(var.tileserv_nginx_port)
+    healthy_threshold   = 2
+    unhealthy_threshold = 3
+    timeout             = 5
+    interval            = 30
+    matcher             = "200,204"
+  }
+
+  tags = { Name = "${var.app_name}-tg-tileserv" }
+}
+
+# ── ACM Certificates ──────────────────────────────────────────────────────────
+# Only created when create_dns = true.
 
 locals {
-  fqdn = var.domain_name != "" ? (
+  api_fqdn = var.domain_name != "" ? (
     var.api_subdomain != "" ? "${var.api_subdomain}.${var.domain_name}" : var.domain_name
   ) : ""
 }
 
+# Certificate for user API domain (api-smatch.sbs)
 resource "aws_acm_certificate" "api" {
   count             = var.create_dns ? 1 : 0
-  domain_name       = local.fqdn
+  domain_name       = local.api_fqdn
   validation_method = "DNS"
 
   lifecycle {
     create_before_destroy = true
   }
 
-  tags = { Name = "${var.app_name}-cert" }
+  tags = { Name = "${var.app_name}-cert-api" }
+}
+
+# Certificate for admin domain (admin-smb.online)
+resource "aws_acm_certificate" "admin" {
+  count             = var.create_dns && var.admin_domain_name != "" ? 1 : 0
+  domain_name       = var.admin_domain_name
+  validation_method = "DNS"
+
+  lifecycle {
+    create_before_destroy = true
+  }
+
+  tags = { Name = "${var.app_name}-cert-admin" }
 }
 
 # ── Route53 ───────────────────────────────────────────────────────────────────
 
-data "aws_route53_zone" "main" {
+data "aws_route53_zone" "api" {
   count        = var.create_dns ? 1 : 0
   name         = var.domain_name
   private_zone = false
 }
 
-# DNS validation record for ACM
-resource "aws_route53_record" "cert_validation" {
+data "aws_route53_zone" "admin" {
+  count        = var.create_dns && var.admin_domain_name != "" ? 1 : 0
+  name         = var.admin_domain_name
+  private_zone = false
+}
+
+# DNS validation record for API cert
+resource "aws_route53_record" "api_cert_validation" {
   count   = var.create_dns ? 1 : 0
-  zone_id = data.aws_route53_zone.main[0].zone_id
+  zone_id = data.aws_route53_zone.api[0].zone_id
   name    = tolist(aws_acm_certificate.api[0].domain_validation_options)[0].resource_record_name
   type    = tolist(aws_acm_certificate.api[0].domain_validation_options)[0].resource_record_type
   records = [tolist(aws_acm_certificate.api[0].domain_validation_options)[0].resource_record_value]
@@ -76,14 +143,43 @@ resource "aws_route53_record" "cert_validation" {
 resource "aws_acm_certificate_validation" "api" {
   count                   = var.create_dns ? 1 : 0
   certificate_arn         = aws_acm_certificate.api[0].arn
-  validation_record_fqdns = [aws_route53_record.cert_validation[0].fqdn]
+  validation_record_fqdns = [aws_route53_record.api_cert_validation[0].fqdn]
 }
 
-# A record: api.yourdomain.com → ALB
+# DNS validation record for admin cert
+resource "aws_route53_record" "admin_cert_validation" {
+  count   = var.create_dns && var.admin_domain_name != "" ? 1 : 0
+  zone_id = data.aws_route53_zone.admin[0].zone_id
+  name    = tolist(aws_acm_certificate.admin[0].domain_validation_options)[0].resource_record_name
+  type    = tolist(aws_acm_certificate.admin[0].domain_validation_options)[0].resource_record_type
+  records = [tolist(aws_acm_certificate.admin[0].domain_validation_options)[0].resource_record_value]
+  ttl     = 60
+}
+
+resource "aws_acm_certificate_validation" "admin" {
+  count                   = var.create_dns && var.admin_domain_name != "" ? 1 : 0
+  certificate_arn         = aws_acm_certificate.admin[0].arn
+  validation_record_fqdns = [aws_route53_record.admin_cert_validation[0].fqdn]
+}
+
+# A records — both domains point to the same ALB
 resource "aws_route53_record" "api" {
   count   = var.create_dns ? 1 : 0
-  zone_id = data.aws_route53_zone.main[0].zone_id
-  name    = local.fqdn
+  zone_id = data.aws_route53_zone.api[0].zone_id
+  name    = local.api_fqdn
+  type    = "A"
+
+  alias {
+    name                   = aws_lb.main.dns_name
+    zone_id                = aws_lb.main.zone_id
+    evaluate_target_health = true
+  }
+}
+
+resource "aws_route53_record" "admin" {
+  count   = var.create_dns && var.admin_domain_name != "" ? 1 : 0
+  zone_id = data.aws_route53_zone.admin[0].zone_id
+  name    = var.admin_domain_name
   type    = "A"
 
   alias {
@@ -136,5 +232,65 @@ resource "aws_lb_listener" "https" {
   default_action {
     type             = "forward"
     target_group_arn = aws_lb_target_group.backend.arn
+  }
+}
+
+# Attach admin certificate as an additional cert on the HTTPS listener
+resource "aws_lb_listener_certificate" "admin" {
+  count           = var.create_dns && var.admin_domain_name != "" ? 1 : 0
+  listener_arn    = aws_lb_listener.https[0].arn
+  certificate_arn = aws_acm_certificate_validation.admin[0].certificate_arn
+}
+
+# ── Listener Rules ────────────────────────────────────────────────────────────
+# Priority 10: api-smatch.sbs + /api/map-tiles/* → pg_tileserv
+resource "aws_lb_listener_rule" "tileserv" {
+  count        = var.create_dns ? 1 : 0
+  listener_arn = aws_lb_listener.https[0].arn
+  priority     = 10
+
+  action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.tileserv.arn
+  }
+
+  condition {
+    host_header { values = [local.api_fqdn] }
+  }
+
+  condition {
+    path_pattern { values = ["/api/map-tiles/*"] }
+  }
+}
+
+# Priority 20: api-smatch.sbs → user backend
+resource "aws_lb_listener_rule" "api" {
+  count        = var.create_dns ? 1 : 0
+  listener_arn = aws_lb_listener.https[0].arn
+  priority     = 20
+
+  action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.backend.arn
+  }
+
+  condition {
+    host_header { values = [local.api_fqdn] }
+  }
+}
+
+# Priority 30: admin-smb.online → admin backend
+resource "aws_lb_listener_rule" "admin" {
+  count        = var.create_dns && var.admin_domain_name != "" ? 1 : 0
+  listener_arn = aws_lb_listener.https[0].arn
+  priority     = 30
+
+  action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.admin.arn
+  }
+
+  condition {
+    host_header { values = [var.admin_domain_name] }
   }
 }

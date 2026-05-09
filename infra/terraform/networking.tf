@@ -227,3 +227,84 @@ resource "aws_security_group" "redis" {
 
   tags = { Name = "${var.app_name}-sg-redis" }
 }
+
+# Admin backend — allow traffic from ALB only
+resource "aws_security_group" "admin" {
+  name        = "${var.app_name}-sg-admin"
+  description = "Allow inbound from ALB to admin backend port"
+  vpc_id      = aws_vpc.main.id
+
+  ingress {
+    description     = "Admin API"
+    from_port       = var.backend_port
+    to_port         = var.backend_port
+    protocol        = "tcp"
+    security_groups = [aws_security_group.alb.id]
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = { Name = "${var.app_name}-sg-admin" }
+}
+
+# pg_tileserv — allow traffic from ALB to nginx port
+resource "aws_security_group" "tileserv" {
+  name        = "${var.app_name}-sg-tileserv"
+  description = "Allow inbound from ALB to tileserv nginx port"
+  vpc_id      = aws_vpc.main.id
+
+  ingress {
+    description     = "nginx tileserv"
+    from_port       = var.tileserv_nginx_port
+    to_port         = var.tileserv_nginx_port
+    protocol        = "tcp"
+    security_groups = [aws_security_group.alb.id]
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = { Name = "${var.app_name}-sg-tileserv" }
+}
+
+# Allow admin backend → primary RDS
+resource "aws_security_group_rule" "rds_from_admin" {
+  type                     = "ingress"
+  description              = "Postgres from admin backend"
+  from_port                = var.db_port
+  to_port                  = var.db_port
+  protocol                 = "tcp"
+  source_security_group_id = aws_security_group.admin.id
+  security_group_id        = aws_security_group.rds.id
+}
+
+# Allow tileserv → RDS (read replica direct connection)
+resource "aws_security_group_rule" "rds_from_tileserv" {
+  type                     = "ingress"
+  description              = "Postgres from tileserv (pg_tileserv direct)"
+  from_port                = var.db_port
+  to_port                  = var.db_port
+  protocol                 = "tcp"
+  source_security_group_id = aws_security_group.tileserv.id
+  security_group_id        = aws_security_group.rds.id
+}
+
+# Allow admin backend → Redis
+resource "aws_security_group_rule" "redis_from_admin" {
+  type                     = "ingress"
+  description              = "Redis from admin backend"
+  from_port                = var.redis_port
+  to_port                  = var.redis_port
+  protocol                 = "tcp"
+  source_security_group_id = aws_security_group.admin.id
+  security_group_id        = aws_security_group.redis.id
+}

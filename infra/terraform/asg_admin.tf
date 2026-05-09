@@ -1,7 +1,7 @@
-# ── IAM Role for EC2 (ECR pull + SSM access) ─────────────────────────────────
+# ── IAM Role for Admin EC2 ────────────────────────────────────────────────────
 
-resource "aws_iam_role" "backend" {
-  name = "${var.app_name}-ec2-role"
+resource "aws_iam_role" "admin" {
+  name = "${var.app_name}-admin-ec2-role"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -12,22 +12,22 @@ resource "aws_iam_role" "backend" {
     }]
   })
 
-  tags = { Name = "${var.app_name}-ec2-role" }
+  tags = { Name = "${var.app_name}-admin-ec2-role" }
 }
 
-resource "aws_iam_role_policy_attachment" "ecr_readonly" {
-  role       = aws_iam_role.backend.name
+resource "aws_iam_role_policy_attachment" "admin_ecr_readonly" {
+  role       = aws_iam_role.admin.name
   policy_arn = "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly"
 }
 
-resource "aws_iam_role_policy_attachment" "ssm_core" {
-  role       = aws_iam_role.backend.name
+resource "aws_iam_role_policy_attachment" "admin_ssm_core" {
+  role       = aws_iam_role.admin.name
   policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
 }
 
-resource "aws_iam_role_policy" "backend_firebase_secret" {
+resource "aws_iam_role_policy" "admin_firebase_secret" {
   name = "firebase-secret-read"
-  role = aws_iam_role.backend.name
+  role = aws_iam_role.admin.name
 
   policy = jsonencode({
     Version = "2012-10-17"
@@ -39,28 +39,28 @@ resource "aws_iam_role_policy" "backend_firebase_secret" {
   })
 }
 
-resource "aws_iam_instance_profile" "backend" {
-  name = "${var.app_name}-ec2-profile"
-  role = aws_iam_role.backend.name
+resource "aws_iam_instance_profile" "admin" {
+  name = "${var.app_name}-admin-ec2-profile"
+  role = aws_iam_role.admin.name
 }
 
 # ── Launch Template ───────────────────────────────────────────────────────────
 
-resource "aws_launch_template" "backend" {
-  name_prefix   = "${var.app_name}-lt-"
+resource "aws_launch_template" "admin" {
+  name_prefix   = "${var.app_name}-admin-lt-"
   image_id      = var.ami_id
   instance_type = var.instance_type
 
-  vpc_security_group_ids = [aws_security_group.backend.id]
+  vpc_security_group_ids = [aws_security_group.admin.id]
 
   iam_instance_profile {
-    arn = aws_iam_instance_profile.backend.arn
+    arn = aws_iam_instance_profile.admin.arn
   }
 
   user_data = base64encode(templatefile("${path.module}/user_data.sh.tpl", {
     aws_region             = var.aws_region
     ecr_repo_url           = var.ecr_repo_url
-    image_tag              = "latest"
+    image_tag              = "admin"
     backend_port           = var.backend_port
     database_url           = "postgresql://${var.db_username}:${var.db_password}@${aws_db_instance.main.address}:${aws_db_instance.main.port}/${var.db_name}?sslmode=require"
     redis_host             = aws_elasticache_cluster.main.cache_nodes[0].address
@@ -82,25 +82,24 @@ resource "aws_launch_template" "backend" {
     create_before_destroy = true
   }
 
-  tags = { Name = "${var.app_name}-lt" }
+  tags = { Name = "${var.app_name}-admin-lt" }
 }
 
 # ── Auto Scaling Group ────────────────────────────────────────────────────────
-# Instances are placed in the private app subnets (no public IP, egress via NAT).
 
-resource "aws_autoscaling_group" "backend" {
-  name                = "${var.app_name}-asg"
-  min_size            = var.asg_min_size
-  max_size            = var.asg_max_size
-  desired_capacity    = var.asg_desired_capacity
+resource "aws_autoscaling_group" "admin" {
+  name                = "${var.app_name}-admin-asg"
+  min_size            = var.admin_asg_min_size
+  max_size            = var.admin_asg_max_size
+  desired_capacity    = var.admin_asg_desired_capacity
   vpc_zone_identifier = aws_subnet.private_app[*].id
 
   launch_template {
-    id      = aws_launch_template.backend.id
+    id      = aws_launch_template.admin.id
     version = "$Latest"
   }
 
-  target_group_arns         = [aws_lb_target_group.backend.arn]
+  target_group_arns         = [aws_lb_target_group.admin.arn]
   health_check_type         = "ELB"
   health_check_grace_period = 120
 
@@ -113,7 +112,7 @@ resource "aws_autoscaling_group" "backend" {
 
   dynamic "tag" {
     for_each = {
-      Name = "${var.app_name}-backend"
+      Name = "${var.app_name}-admin"
       Env  = var.environment
     }
     content {
