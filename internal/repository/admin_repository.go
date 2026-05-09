@@ -3,8 +3,10 @@ package repository
 import (
 	"context"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/smatch/badminton-backend/internal/domain"
+	"github.com/smatch/badminton-backend/internal/dto"
 )
 
 type AdminRepository struct {
@@ -76,6 +78,63 @@ func (r *AdminRepository) CreateAuditLog(ctx context.Context, log *domain.AdminA
 		VALUES ($1::uuid, $2, $3, $4::uuid, $5)
 	`, log.AdminUserID, log.Action, log.TargetType, log.TargetID, log.Details)
 	return err
+}
+
+func (r *AdminRepository) GetSignupsTimeseries(ctx context.Context, fromHours int, bucket string) ([]dto.TimeseriesPoint, error) {
+	rows, err := r.db.Query(ctx, `
+		SELECT to_char(date_trunc($1, created_at), 'YYYY-MM-DD HH24:00') as label, COUNT(*) as value
+		FROM users
+		WHERE created_at >= NOW() - INTERVAL '1 hour' * $2
+		GROUP BY date_trunc($1, created_at)
+		ORDER BY date_trunc($1, created_at)
+	`, bucket, fromHours)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanTimeseries(rows)
+}
+
+func (r *AdminRepository) GetBookingUsersTimeseries(ctx context.Context, fromHours int, bucket string) ([]dto.TimeseriesPoint, error) {
+	rows, err := r.db.Query(ctx, `
+		SELECT to_char(date_trunc($1, created_at), 'YYYY-MM-DD HH24:00') as label, COUNT(DISTINCT user_id) as value
+		FROM bookings
+		WHERE created_at >= NOW() - INTERVAL '1 hour' * $2
+		GROUP BY date_trunc($1, created_at)
+		ORDER BY date_trunc($1, created_at)
+	`, bucket, fromHours)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanTimeseries(rows)
+}
+
+func (r *AdminRepository) GetRevenueTimeseries(ctx context.Context, fromHours int, bucket string) ([]dto.TimeseriesPoint, error) {
+	rows, err := r.db.Query(ctx, `
+		SELECT to_char(date_trunc($1, created_at), 'YYYY-MM-DD HH24:00') as label, COALESCE(SUM(amount), 0) as value
+		FROM payments
+		WHERE status = 'success' AND created_at >= NOW() - INTERVAL '1 hour' * $2
+		GROUP BY date_trunc($1, created_at)
+		ORDER BY date_trunc($1, created_at)
+	`, bucket, fromHours)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanTimeseries(rows)
+}
+
+func scanTimeseries(rows pgx.Rows) ([]dto.TimeseriesPoint, error) {
+	var points []dto.TimeseriesPoint
+	for rows.Next() {
+		var p dto.TimeseriesPoint
+		if err := rows.Scan(&p.Label, &p.Value); err != nil {
+			return nil, err
+		}
+		points = append(points, p)
+	}
+	return points, rows.Err()
 }
 
 func (r *AdminRepository) ListAuditLogs(ctx context.Context, page, limit int) ([]*domain.AdminAuditLog, int, error) {

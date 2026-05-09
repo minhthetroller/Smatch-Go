@@ -1,0 +1,278 @@
+-- Setup schema for local PostgreSQL without PostGIS
+-- This creates the minimal schema needed for admin/owner features and mock data
+
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
+
+-- Courts without PostGIS (location as JSONB)
+CREATE TABLE IF NOT EXISTS "courts" (
+    "id"               UUID         NOT NULL DEFAULT uuid_generate_v4(),
+    "name"             VARCHAR(255) NOT NULL,
+    "description"      TEXT,
+    "phone_numbers"    TEXT[],
+    "address_street"   VARCHAR(255),
+    "address_ward"     VARCHAR(100),
+    "address_district" VARCHAR(100),
+    "address_city"     VARCHAR(100) DEFAULT 'Hà Nội',
+    "details"          JSONB        NOT NULL DEFAULT '{}',
+    "opening_hours"    JSONB        NOT NULL DEFAULT '{}',
+    "location"         JSONB,
+    "created_at"       TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    "updated_at"       TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    CONSTRAINT "courts_pkey" PRIMARY KEY ("id")
+);
+
+CREATE INDEX IF NOT EXISTS "idx_courts_district"   ON "courts"("address_district");
+CREATE INDEX IF NOT EXISTS "idx_courts_details"    ON "courts" USING GIN ("details");
+CREATE INDEX IF NOT EXISTS "idx_courts_name_trgm"  ON "courts" USING GIN ("name" gin_trgm_ops);
+
+CREATE TABLE IF NOT EXISTS "sub_courts" (
+    "id"          UUID         NOT NULL DEFAULT uuid_generate_v4(),
+    "court_id"    UUID         NOT NULL,
+    "name"        VARCHAR(100) NOT NULL,
+    "description" TEXT,
+    "is_active"   BOOLEAN      NOT NULL DEFAULT true,
+    "created_at"  TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    "updated_at"  TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    CONSTRAINT "sub_courts_pkey"         PRIMARY KEY ("id"),
+    CONSTRAINT "sub_courts_court_id_fkey" FOREIGN KEY ("court_id") REFERENCES "courts"("id") ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS "idx_sub_courts_court_id" ON "sub_courts"("court_id");
+
+CREATE TABLE IF NOT EXISTS "sub_court_closures" (
+    "id"           UUID        NOT NULL DEFAULT uuid_generate_v4(),
+    "sub_court_id" UUID        NOT NULL,
+    "date"         DATE        NOT NULL,
+    "start_time"   TIME,
+    "end_time"     TIME,
+    "reason"       VARCHAR(255),
+    "created_at"   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT "sub_court_closures_pkey"            PRIMARY KEY ("id"),
+    CONSTRAINT "sub_court_closures_sub_court_fkey"  FOREIGN KEY ("sub_court_id") REFERENCES "sub_courts"("id") ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS "idx_sub_court_closures_lookup" ON "sub_court_closures"("sub_court_id", "date");
+
+CREATE TABLE IF NOT EXISTS "pricing_rules" (
+    "id"            UUID         NOT NULL DEFAULT uuid_generate_v4(),
+    "court_id"      UUID         NOT NULL,
+    "name"          VARCHAR(100) NOT NULL,
+    "day_type"      VARCHAR(20)  NOT NULL,
+    "start_time"    TIME         NOT NULL,
+    "end_time"      TIME         NOT NULL,
+    "price_per_hour" INTEGER     NOT NULL,
+    "is_active"     BOOLEAN      NOT NULL DEFAULT true,
+    "created_at"    TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    "updated_at"    TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    CONSTRAINT "pricing_rules_pkey"         PRIMARY KEY ("id"),
+    CONSTRAINT "pricing_rules_court_fkey"   FOREIGN KEY ("court_id") REFERENCES "courts"("id") ON DELETE CASCADE,
+    CONSTRAINT "pricing_rules_valid_day"    CHECK (day_type IN ('weekday','weekend','holiday'))
+);
+
+CREATE INDEX IF NOT EXISTS "idx_pricing_rules_court" ON "pricing_rules"("court_id", "day_type", "is_active");
+
+CREATE TABLE IF NOT EXISTS "holidays" (
+    "id"         UUID        NOT NULL DEFAULT uuid_generate_v4(),
+    "date"       DATE        NOT NULL,
+    "name"       VARCHAR(255),
+    "multiplier" FLOAT       NOT NULL DEFAULT 1.0,
+    "created_at" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT "holidays_pkey"        PRIMARY KEY ("id"),
+    CONSTRAINT "holidays_date_unique" UNIQUE ("date")
+);
+
+CREATE INDEX IF NOT EXISTS "idx_holidays_date" ON "holidays"("date");
+
+CREATE TABLE IF NOT EXISTS "users" (
+    "id"               UUID         NOT NULL DEFAULT uuid_generate_v4(),
+    "firebase_uid"     VARCHAR(128) NOT NULL,
+    "email"            VARCHAR(255),
+    "username"         VARCHAR(50),
+    "provider"         VARCHAR(50)  NOT NULL,
+    "is_anonymous"     BOOLEAN      NOT NULL DEFAULT false,
+    "first_name"       VARCHAR(100),
+    "last_name"        VARCHAR(100),
+    "gender"           VARCHAR(20),
+    "phone_number"     VARCHAR(20),
+    "photo_url"        TEXT,
+    "address_street"   VARCHAR(255),
+    "address_ward"     VARCHAR(100),
+    "address_district" VARCHAR(100),
+    "address_city"     VARCHAR(100) DEFAULT 'Hà Nội',
+    "fcm_tokens"       TEXT[]       NOT NULL DEFAULT '{}',
+    "created_at"       TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    "updated_at"       TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    CONSTRAINT "users_pkey"            PRIMARY KEY ("id"),
+    CONSTRAINT "users_firebase_unique" UNIQUE ("firebase_uid"),
+    CONSTRAINT "users_email_unique"    UNIQUE ("email"),
+    CONSTRAINT "users_username_unique" UNIQUE ("username")
+);
+
+CREATE INDEX IF NOT EXISTS "idx_users_firebase_uid" ON "users"("firebase_uid");
+CREATE INDEX IF NOT EXISTS "idx_users_email"        ON "users"("email");
+CREATE INDEX IF NOT EXISTS "idx_users_username"     ON "users"("username");
+
+CREATE TABLE IF NOT EXISTS "bookings" (
+    "id"           UUID        NOT NULL DEFAULT uuid_generate_v4(),
+    "sub_court_id" UUID        NOT NULL,
+    "user_id"      UUID,
+    "guest_name"   VARCHAR(255),
+    "guest_phone"  VARCHAR(20),
+    "guest_email"  VARCHAR(255),
+    "date"         DATE        NOT NULL,
+    "start_time"   TIME        NOT NULL,
+    "end_time"     TIME        NOT NULL,
+    "total_price"  INTEGER     NOT NULL,
+    "status"       VARCHAR(20) NOT NULL DEFAULT 'pending',
+    "notes"        TEXT,
+    "group_id"     UUID,
+    "created_at"   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    "updated_at"   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT "bookings_pkey"            PRIMARY KEY ("id"),
+    CONSTRAINT "bookings_sub_court_fkey"  FOREIGN KEY ("sub_court_id") REFERENCES "sub_courts"("id") ON DELETE CASCADE,
+    CONSTRAINT "bookings_user_fkey"       FOREIGN KEY ("user_id") REFERENCES "users"("id") ON DELETE SET NULL,
+    CONSTRAINT "bookings_valid_hours"     CHECK (start_time < end_time),
+    CONSTRAINT "bookings_valid_status"    CHECK (status IN ('pending','confirmed','cancelled','completed','failed'))
+);
+
+CREATE INDEX IF NOT EXISTS "idx_bookings_sub_court_date" ON "bookings"("sub_court_id", "date", "status");
+CREATE INDEX IF NOT EXISTS "idx_bookings_date_range"     ON "bookings"("date", "start_time", "end_time");
+CREATE INDEX IF NOT EXISTS "idx_bookings_user_id"        ON "bookings"("user_id");
+CREATE INDEX IF NOT EXISTS "idx_bookings_group_id"       ON "bookings"("group_id");
+
+CREATE TABLE IF NOT EXISTS "payments" (
+    "id"              UUID        NOT NULL DEFAULT uuid_generate_v4(),
+    "booking_id"      UUID,
+    "match_player_id" UUID,
+    "payment_type"    VARCHAR(20) NOT NULL DEFAULT 'BOOKING',
+    "app_trans_id"    VARCHAR(40) NOT NULL,
+    "zp_trans_id"     VARCHAR(20),
+    "zp_trans_token"  VARCHAR(256),
+    "amount"          INTEGER     NOT NULL,
+    "status"          VARCHAR(20) NOT NULL DEFAULT 'pending',
+    "order_url"       TEXT,
+    "callback_data"   JSONB,
+    "created_at"      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    "updated_at"      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT "payments_pkey"           PRIMARY KEY ("id"),
+    CONSTRAINT "payments_app_trans_unique" UNIQUE ("app_trans_id"),
+    CONSTRAINT "payments_booking_fkey"   FOREIGN KEY ("booking_id") REFERENCES "bookings"("id") ON DELETE CASCADE,
+    CONSTRAINT "payments_valid_type"     CHECK (payment_type IN ('BOOKING','MATCH_JOIN')),
+    CONSTRAINT "payments_valid_status"   CHECK (status IN ('pending','success','failed','expired'))
+);
+
+CREATE INDEX IF NOT EXISTS "idx_payments_booking_id"      ON "payments"("booking_id");
+CREATE INDEX IF NOT EXISTS "idx_payments_match_player_id" ON "payments"("match_player_id");
+CREATE INDEX IF NOT EXISTS "idx_payments_status"          ON "payments"("status");
+CREATE INDEX IF NOT EXISTS "idx_payments_type"            ON "payments"("payment_type");
+
+-- Matches and match_players simplified (no enums)
+CREATE TABLE IF NOT EXISTS "matches" (
+    "id"            UUID        NOT NULL DEFAULT uuid_generate_v4(),
+    "court_id"      UUID        NOT NULL,
+    "host_user_id"  UUID        NOT NULL,
+    "title"         VARCHAR(255),
+    "description"   TEXT,
+    "images"        TEXT[]      NOT NULL DEFAULT '{}',
+    "skill_level"   VARCHAR(30) NOT NULL,
+    "shuttle_type"  VARCHAR(30) NOT NULL,
+    "player_format" VARCHAR(30) NOT NULL,
+    "date"          DATE        NOT NULL,
+    "start_time"    TIME        NOT NULL,
+    "end_time"      TIME        NOT NULL,
+    "is_private"    BOOLEAN     NOT NULL DEFAULT false,
+    "price"         INTEGER     NOT NULL DEFAULT 0,
+    "slots_needed"  INTEGER     NOT NULL DEFAULT 1,
+    "status"        VARCHAR(20) NOT NULL DEFAULT 'OPEN',
+    "created_at"    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    "updated_at"    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT "matches_pkey"        PRIMARY KEY ("id"),
+    CONSTRAINT "matches_court_fkey"  FOREIGN KEY ("court_id") REFERENCES "courts"("id") ON DELETE CASCADE,
+    CONSTRAINT "matches_host_fkey"   FOREIGN KEY ("host_user_id") REFERENCES "users"("id") ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS "idx_matches_court_id"      ON "matches"("court_id");
+CREATE INDEX IF NOT EXISTS "idx_matches_host_user_id"  ON "matches"("host_user_id");
+CREATE INDEX IF NOT EXISTS "idx_matches_date_status"   ON "matches"("date", "status");
+
+CREATE TABLE IF NOT EXISTS "match_players" (
+    "id"           UUID        NOT NULL DEFAULT uuid_generate_v4(),
+    "match_id"     UUID        NOT NULL,
+    "user_id"      UUID        NOT NULL,
+    "status"       VARCHAR(20) NOT NULL DEFAULT 'PENDING',
+    "message"      TEXT,
+    "position"     INTEGER,
+    "requested_at" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    "responded_at" TIMESTAMPTZ,
+    CONSTRAINT "match_players_pkey"        PRIMARY KEY ("id"),
+    CONSTRAINT "match_players_match_fkey"  FOREIGN KEY ("match_id") REFERENCES "matches"("id") ON DELETE CASCADE,
+    CONSTRAINT "match_players_user_fkey"   FOREIGN KEY ("user_id") REFERENCES "users"("id") ON DELETE CASCADE,
+    CONSTRAINT "match_players_unique"      UNIQUE ("match_id", "user_id")
+);
+
+CREATE INDEX IF NOT EXISTS "idx_match_players_match_status" ON "match_players"("match_id", "status");
+CREATE INDEX IF NOT EXISTS "idx_match_players_user_id"      ON "match_players"("user_id");
+
+-- Add match_player FK to payments
+ALTER TABLE "payments"
+    ADD CONSTRAINT IF NOT EXISTS "payments_match_player_fkey"
+    FOREIGN KEY ("match_player_id") REFERENCES "match_players"("id") ON DELETE CASCADE;
+
+-- Admin schema
+ALTER TABLE "users"
+    ADD COLUMN IF NOT EXISTS "roles" TEXT[] NOT NULL DEFAULT '{user}';
+
+CREATE INDEX IF NOT EXISTS "idx_users_roles" ON "users" USING GIN ("roles");
+
+ALTER TABLE "courts"
+    ADD COLUMN IF NOT EXISTS "owner_user_id" UUID REFERENCES "users"("id") ON DELETE SET NULL;
+
+CREATE INDEX IF NOT EXISTS "idx_courts_owner_user_id" ON "courts"("owner_user_id");
+
+CREATE TABLE IF NOT EXISTS "business_profile_applications" (
+    "id"                                  UUID         NOT NULL DEFAULT uuid_generate_v4(),
+    "user_id"                             UUID         NOT NULL,
+    "legal_representative_name"           VARCHAR(255) NOT NULL,
+    "personal_id_number"                  VARCHAR(50)  NOT NULL,
+    "personal_id_front_image_url"         TEXT,
+    "personal_id_back_image_url"          TEXT,
+    "business_registration_cert_url"      TEXT,
+    "sports_business_eligibility_cert_url" TEXT,
+    "fire_safety_cert_url"                TEXT,
+    "tax_id_number"                       VARCHAR(50)  NOT NULL,
+    "proof_of_address_url"                TEXT,
+    "bank_account_number"                 VARCHAR(100) NOT NULL,
+    "bank_name"                           VARCHAR(100) NOT NULL,
+    "bank_branch"                         VARCHAR(100) NOT NULL,
+    "bank_account_holder_name"            VARCHAR(255) NOT NULL,
+    "operational_specs"                   JSONB        NOT NULL DEFAULT '{}',
+    "status"                              VARCHAR(30)  NOT NULL DEFAULT 'pending',
+    "admin_notes"                         TEXT,
+    "submitted_at"                        TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    "reviewed_at"                         TIMESTAMPTZ,
+    "reviewed_by"                         UUID,
+    CONSTRAINT "business_profiles_pkey"              PRIMARY KEY ("id"),
+    CONSTRAINT "business_profiles_user_unique"         UNIQUE ("user_id"),
+    CONSTRAINT "business_profiles_user_fkey"           FOREIGN KEY ("user_id") REFERENCES "users"("id") ON DELETE CASCADE,
+    CONSTRAINT "business_profiles_reviewer_fkey"       FOREIGN KEY ("reviewed_by") REFERENCES "users"("id") ON DELETE SET NULL,
+    CONSTRAINT "business_profiles_valid_status"        CHECK (status IN ('pending','approved','rejected','resubmit_requested'))
+);
+
+CREATE INDEX IF NOT EXISTS "idx_business_profiles_user_id" ON "business_profile_applications"("user_id");
+CREATE INDEX IF NOT EXISTS "idx_business_profiles_status"   ON "business_profile_applications"("status", "submitted_at");
+
+CREATE TABLE IF NOT EXISTS "admin_audit_logs" (
+    "id"            UUID         NOT NULL DEFAULT uuid_generate_v4(),
+    "admin_user_id" UUID         NOT NULL,
+    "action"        VARCHAR(100) NOT NULL,
+    "target_type"   VARCHAR(50),
+    "target_id"     UUID,
+    "details"       JSONB        NOT NULL DEFAULT '{}',
+    "created_at"    TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    CONSTRAINT "admin_audit_logs_pkey"       PRIMARY KEY ("id"),
+    CONSTRAINT "admin_audit_logs_admin_fkey" FOREIGN KEY ("admin_user_id") REFERENCES "users"("id") ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS "idx_admin_audit_logs_admin"   ON "admin_audit_logs"("admin_user_id", "created_at");
+CREATE INDEX IF NOT EXISTS "idx_admin_audit_logs_target"  ON "admin_audit_logs"("target_type", "target_id");

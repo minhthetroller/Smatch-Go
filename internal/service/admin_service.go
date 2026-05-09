@@ -115,6 +115,39 @@ func (s *AdminService) ReviewApplication(ctx context.Context, adminID, appID str
 	return nil
 }
 
+func (s *AdminService) GetApplication(ctx context.Context, id string) (*dto.BusinessProfileResponse, error) {
+	bp, err := s.bpRepo.FindByID(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if bp == nil {
+		return nil, nil
+	}
+	return &dto.BusinessProfileResponse{
+		ID:                               bp.ID,
+		UserID:                           bp.UserID,
+		LegalRepresentativeName:          bp.LegalRepresentativeName,
+		PersonalIDNumber:                 bp.PersonalIDNumber,
+		PersonalIDFrontImageURL:          bp.PersonalIDFrontImageURL,
+		PersonalIDBackImageURL:           bp.PersonalIDBackImageURL,
+		BusinessRegistrationCertURL:      bp.BusinessRegistrationCertURL,
+		SportsBusinessEligibilityCertURL: bp.SportsBusinessEligibilityCertURL,
+		FireSafetyCertURL:                bp.FireSafetyCertURL,
+		TaxIDNumber:                      bp.TaxIDNumber,
+		ProofOfAddressURL:                bp.ProofOfAddressURL,
+		BankAccountNumber:                bp.BankAccountNumber,
+		BankName:                         bp.BankName,
+		BankBranch:                       bp.BankBranch,
+		BankAccountHolderName:            bp.BankAccountHolderName,
+		OperationalSpecs:                 bp.OperationalSpecs,
+		Status:                           string(bp.Status),
+		AdminNotes:                       bp.AdminNotes,
+		SubmittedAt:                      bp.SubmittedAt.Format("2006-01-02T15:04:05Z"),
+		ReviewedAt:                       formatTimePtr(bp.ReviewedAt),
+		ReviewedBy:                       bp.ReviewedBy,
+	}, nil
+}
+
 func (s *AdminService) GetPlatformStats(ctx context.Context) (*dto.AdminStatsResponse, error) {
 	stats, err := s.adminRepo.GetPlatformStats(ctx)
 	if err != nil {
@@ -127,6 +160,45 @@ func (s *AdminService) GetPlatformStats(ctx context.Context) (*dto.AdminStatsRes
 		TotalRevenue:        stats.TotalRevenue,
 		PendingApplications: stats.PendingApplications,
 		RecentSignups:       stats.RecentSignups,
+	}, nil
+}
+
+func (s *AdminService) GetTimeseriesStats(ctx context.Context, rangeParam string) (*dto.AdminTimeseriesResponse, error) {
+	var bucket string
+	var fromHours int
+	switch rangeParam {
+	case "1h":
+		bucket = "1 hour"
+		fromHours = 24
+	case "1d":
+		bucket = "1 day"
+		fromHours = 24 * 7
+	case "1m":
+		bucket = "1 day"
+		fromHours = 24 * 30
+	default:
+		bucket = "1 day"
+		fromHours = 24 * 7
+	}
+
+	signups, err := s.adminRepo.GetSignupsTimeseries(ctx, fromHours, bucket)
+	if err != nil {
+		return nil, err
+	}
+	activeUsers, err := s.adminRepo.GetBookingUsersTimeseries(ctx, fromHours, bucket)
+	if err != nil {
+		return nil, err
+	}
+	revenue, err := s.adminRepo.GetRevenueTimeseries(ctx, fromHours, bucket)
+	if err != nil {
+		return nil, err
+	}
+
+	return &dto.AdminTimeseriesResponse{
+		Range:       rangeParam,
+		Signups:     signups,
+		ActiveUsers: activeUsers,
+		Revenue:     revenue,
 	}, nil
 }
 

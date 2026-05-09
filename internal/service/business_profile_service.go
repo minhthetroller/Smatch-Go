@@ -97,6 +97,23 @@ func (s *BusinessProfileService) GetApplication(ctx context.Context, userID stri
 	return s.toResponse(bp), nil
 }
 
+func (s *BusinessProfileService) DeleteApplication(ctx context.Context, userID string) error {
+	bp, err := s.bpRepo.FindByUserID(ctx, userID)
+	if err != nil {
+		return err
+	}
+	if bp == nil {
+		return domain.NotFound("Business profile not found")
+	}
+	if bp.Status != domain.BusinessProfileRejected {
+		return domain.BadRequest("Only rejected applications can be deleted")
+	}
+	if bp.AdminNotes != nil && *bp.AdminNotes != "" {
+		return domain.BadRequest("Applications with admin notes must be edited and resubmitted, not deleted")
+	}
+	return s.bpRepo.DeleteByUserID(ctx, userID)
+}
+
 func (s *BusinessProfileService) toResponse(bp *domain.BusinessProfile) *dto.BusinessProfileResponse {
 	return &dto.BusinessProfileResponse{
 		ID:                               bp.ID,

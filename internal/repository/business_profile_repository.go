@@ -135,6 +135,11 @@ func (r *BusinessProfileRepository) UpdateStatus(ctx context.Context, id string,
 	return err
 }
 
+func (r *BusinessProfileRepository) DeleteByUserID(ctx context.Context, userID string) error {
+	_, err := r.db.Exec(ctx, `DELETE FROM business_profile_applications WHERE user_id = $1::uuid`, userID)
+	return err
+}
+
 func (r *BusinessProfileRepository) List(ctx context.Context, status string, page, limit int) ([]*domain.BusinessProfile, int, error) {
 	var where string
 	var args []interface{}

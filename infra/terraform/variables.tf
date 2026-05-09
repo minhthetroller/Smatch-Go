@@ -1,7 +1,7 @@
 # ── General ───────────────────────────────────────────────────────────────────
 
 variable "app_name" {
-  description = "Name prefix for all AWS resources"
+  description = "Name prefix for all Azure resources"
   type        = string
   default     = "smatch"
 }
@@ -12,91 +12,74 @@ variable "environment" {
   default     = "staging"
 }
 
-variable "aws_region" {
-  description = "AWS region"
+variable "azure_region" {
+  description = "Azure region"
   type        = string
-  default     = "ap-southeast-1"
-}
-
-variable "aws_profile" {
-  description = "AWS CLI profile from ~/.aws/credentials"
-  type        = string
-  default     = "default"
-}
-
-variable "aws_endpoint" {
-  description = "Override AWS endpoint URL (set to LocalStack URL for local dev; leave empty for real AWS)"
-  type        = string
-  default     = ""
+  default     = "southeastasia"
 }
 
 # ── Networking ────────────────────────────────────────────────────────────────
 
-variable "vpc_cidr" {
-  description = "CIDR block for the VPC"
-  type        = string
-  default     = "10.0.0.0/16"
-}
-
-variable "availability_zones" {
-  description = "List of availability zones to deploy into"
+variable "vnet_address_space" {
+  description = "Address space for the Virtual Network"
   type        = list(string)
-  default     = ["ap-southeast-1a", "ap-southeast-1b"]
+  default     = ["10.0.0.0/16"]
 }
 
 variable "public_subnet_cidrs" {
-  description = "CIDR blocks for public subnets (ALB)"
+  description = "CIDR blocks for public subnets (Application Gateway)"
   type        = list(string)
   default     = ["10.0.1.0/24", "10.0.2.0/24"]
 }
 
 variable "private_app_subnet_cidrs" {
-  description = "CIDR blocks for private app subnets (ASG / EC2 instances)"
+  description = "CIDR blocks for private app subnets (VMSS instances)"
   type        = list(string)
   default     = ["10.0.3.0/24", "10.0.4.0/24"]
 }
 
-variable "private_subnet_cidrs" {
-  description = "CIDR blocks for private data subnets (RDS, ElastiCache)"
+variable "private_data_subnet_cidrs" {
+  description = "CIDR blocks for private data subnets (PostgreSQL, Redis)"
   type        = list(string)
   default     = ["10.0.5.0/24", "10.0.6.0/24"]
 }
 
-# ── EC2 / ASG ─────────────────────────────────────────────────────────────────
+# ── Compute / VMSS ────────────────────────────────────────────────────────────
 
-variable "ami_id" {
-  description = "AMI ID for EC2 instances in the ASG"
+variable "vmss_instance_type" {
+  description = "Azure VM size for VMSS instances"
   type        = string
+  default     = "Standard_D2s_v3"
 }
 
-variable "instance_type" {
-  description = "EC2 instance type for backend instances"
+variable "vmss_admin_username" {
+  description = "Admin username for VMSS Linux instances"
   type        = string
-  default     = "t3.small"
+  default     = "smatch"
 }
 
-variable "asg_min_size" {
-  description = "Minimum number of EC2 instances in the ASG"
+variable "vmss_ssh_public_key" {
+  description = "SSH public key for VMSS admin user"
+  type        = string
+  sensitive   = true
+}
+
+variable "backend_asg_min_size" {
+  description = "Minimum number of instances in backend VMSS"
   type        = number
   default     = 1
 }
 
-variable "asg_max_size" {
-  description = "Maximum number of EC2 instances in the ASG"
+variable "backend_asg_max_size" {
+  description = "Maximum number of instances in backend VMSS"
   type        = number
   default     = 3
 }
 
-variable "asg_desired_capacity" {
-  description = "Desired number of EC2 instances in the ASG"
+variable "backend_asg_desired_capacity" {
+  description = "Desired number of instances in backend VMSS"
   type        = number
   default     = 2
-}
-
-variable "ecr_repo_url" {
-  description = "Full ECR repository URL for the backend Docker image (e.g. 123456789012.dkr.ecr.ap-southeast-1.amazonaws.com/smatch-backend)"
-  type        = string
-  default     = ""
 }
 
 variable "backend_port" {
@@ -114,13 +97,13 @@ variable "db_name" {
 }
 
 variable "db_username" {
-  description = "PostgreSQL master username"
+  description = "PostgreSQL admin username"
   type        = string
-  default     = "postgres"
+  default     = "psqladmin"
 }
 
 variable "db_password" {
-  description = "PostgreSQL master password (minimum 12 characters)"
+  description = "PostgreSQL admin password (minimum 8 characters)"
   type        = string
   sensitive   = true
 }
@@ -133,35 +116,40 @@ variable "db_port" {
 
 # ── Redis ─────────────────────────────────────────────────────────────────────
 
-variable "redis_port" {
-  description = "ElastiCache Redis port"
-  type        = number
-  default     = 6379
-}
-
-variable "redis_password" {
-  description = "AUTH token for ElastiCache Redis (leave empty to disable auth, not recommended for production)"
+variable "redis_sku" {
+  description = "Azure Cache for Redis SKU (Basic | Standard | Premium)"
   type        = string
-  sensitive   = true
-  default     = ""
+  default     = "Basic"
 }
 
-# ── S3 ────────────────────────────────────────────────────────────────────────
+variable "redis_family" {
+  description = "Azure Cache for Redis family (C = Basic/Standard, P = Premium)"
+  type        = string
+  default     = "C"
+}
 
-variable "s3_bucket_profile" {
-  description = "S3 bucket name for profile photos"
+variable "redis_capacity" {
+  description = "Azure Cache for Redis capacity (0-6 depending on SKU)"
+  type        = number
+  default     = 0
+}
+
+# ── Storage (Blob) ────────────────────────────────────────────────────────────
+
+variable "storage_container_profile" {
+  description = "Blob container name for profile photos"
   type        = string
   default     = "smatch-profiles"
 }
 
-variable "s3_bucket_matches" {
-  description = "S3 bucket name for match media"
+variable "storage_container_matches" {
+  description = "Blob container name for match media"
   type        = string
   default     = "smatch-matches"
 }
 
-variable "s3_bucket_business_docs" {
-  description = "S3 bucket name for court owner business documents"
+variable "storage_container_business_docs" {
+  description = "Blob container name for court owner business documents"
   type        = string
   default     = "smatch-business-docs"
 }
@@ -175,18 +163,18 @@ variable "domain_name" {
 }
 
 variable "api_subdomain" {
-  description = "Subdomain for the API (e.g. api → api.example.com). Leave empty to use the domain root."
+  description = "Subdomain for the API (e.g. api → api.example.com)"
   type        = string
   default     = "api"
 }
 
 variable "create_dns" {
-  description = "Set to true to create Route53 DNS records and an ACM certificate"
+  description = "Set to true to create DNS records and TLS certificates"
   type        = bool
   default     = false
 }
 
-# ── Application config (injected via user-data) ───────────────────────────────
+# ── Application config (injected via cloud-init) ──────────────────────────────
 
 variable "firebase_credentials_file" {
   description = "Path inside the container to the Firebase service-account JSON file"
@@ -239,7 +227,7 @@ variable "rate_limit_trusted_ips" {
   default     = ""
 }
 
-# ── Admin backend ASG ─────────────────────────────────────────────────────────
+# ── Admin backend VMSS ────────────────────────────────────────────────────────
 
 variable "admin_domain_name" {
   description = "Full domain name for the admin backend (e.g. admin-smb.online)"
@@ -248,51 +236,51 @@ variable "admin_domain_name" {
 }
 
 variable "admin_asg_min_size" {
-  description = "Minimum instances in admin ASG"
+  description = "Minimum instances in admin VMSS"
   type        = number
   default     = 1
 }
 
 variable "admin_asg_max_size" {
-  description = "Maximum instances in admin ASG"
+  description = "Maximum instances in admin VMSS"
   type        = number
   default     = 2
 }
 
 variable "admin_asg_desired_capacity" {
-  description = "Desired instances in admin ASG"
+  description = "Desired instances in admin VMSS"
   type        = number
   default     = 1
 }
 
-# ── pg_tileserv ASG ───────────────────────────────────────────────────────────
+# ── pg_tileserv VMSS ──────────────────────────────────────────────────────────
 
 variable "tileserv_asg_min_size" {
-  description = "Minimum instances in tileserv ASG"
+  description = "Minimum instances in tileserv VMSS"
   type        = number
   default     = 1
 }
 
 variable "tileserv_asg_max_size" {
-  description = "Maximum instances in tileserv ASG"
+  description = "Maximum instances in tileserv VMSS"
   type        = number
   default     = 3
 }
 
 variable "tileserv_asg_desired_capacity" {
-  description = "Desired instances in tileserv ASG"
+  description = "Desired instances in tileserv VMSS"
   type        = number
   default     = 2
 }
 
 variable "tileserv_port" {
-  description = "Port pg_tileserv binary listens on"
+  description = "Port pg_tileserv listens on"
   type        = number
   default     = 7800
 }
 
 variable "tileserv_nginx_port" {
-  description = "Port nginx listens on for tileserv (the port ALB forwards to)"
+  description = "Port nginx listens on for tileserv"
   type        = number
   default     = 80
 }
@@ -301,4 +289,12 @@ variable "pg_tileserv_version" {
   description = "pg_tileserv release version to download from GitHub"
   type        = string
   default     = "1.0.11"
+}
+
+# ── Container Registry ────────────────────────────────────────────────────────
+
+variable "acr_name" {
+  description = "Azure Container Registry name (globally unique, alphanumeric only)"
+  type        = string
+  default     = ""
 }

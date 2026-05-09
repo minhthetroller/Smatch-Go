@@ -62,8 +62,49 @@ func (h *AuthHandler) Verify(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// If profile data provided on verify (e.g., registration), update profile
+	if req.Profile != nil {
+		fields := map[string]interface{}{}
+		if req.Profile.Username != nil {
+			fields["username"] = *req.Profile.Username
+		}
+		if req.Profile.FirstName != nil {
+			fields["first_name"] = *req.Profile.FirstName
+		}
+		if req.Profile.LastName != nil {
+			fields["last_name"] = *req.Profile.LastName
+		}
+		if req.Profile.Gender != nil {
+			fields["gender"] = *req.Profile.Gender
+		}
+		if req.Profile.PhoneNumber != nil {
+			fields["phone_number"] = *req.Profile.PhoneNumber
+		}
+		if req.Profile.PhotoURL != nil {
+			fields["photo_url"] = *req.Profile.PhotoURL
+		}
+		if req.Profile.AddressStreet != nil {
+			fields["address_street"] = *req.Profile.AddressStreet
+		}
+		if req.Profile.AddressWard != nil {
+			fields["address_ward"] = *req.Profile.AddressWard
+		}
+		if req.Profile.AddressDistrict != nil {
+			fields["address_district"] = *req.Profile.AddressDistrict
+		}
+		if req.Profile.AddressCity != nil {
+			fields["address_city"] = *req.Profile.AddressCity
+		}
+		if len(fields) > 0 {
+			updated, err := h.userRepo.UpdateProfile(r.Context(), created.ID, fields)
+			if err == nil && updated != nil {
+				created = updated
+			}
+		}
+	}
+
 	sendSuccess(w, dto.AuthResponse{
-		User:      mapUserToDTO(created),
+		User:      MapUserToDTO(created),
 		IsNewUser: isNew,
 	}, 200)
 }
@@ -88,13 +129,13 @@ func (h *AuthHandler) Anonymous(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sendSuccess(w, dto.AuthResponse{User: mapUserToDTO(created), IsNewUser: isNew}, 201)
+	sendSuccess(w, dto.AuthResponse{User: MapUserToDTO(created), IsNewUser: isNew}, 201)
 }
 
 // GET /api/auth/me - Return current authenticated user.
 func (h *AuthHandler) Me(w http.ResponseWriter, r *http.Request) {
 	user := middleware.UserFromContext(r.Context())
-	sendSuccess(w, mapUserToDTO(user), 200)
+	sendSuccess(w, MapUserToDTO(user), 200)
 }
 
 // PUT /api/auth/me - Update profile.
@@ -143,7 +184,7 @@ func (h *AuthHandler) UpdateMe(w http.ResponseWriter, r *http.Request) {
 		sendError(w, "Failed to update profile", "INTERNAL_ERROR", 500)
 		return
 	}
-	sendSuccess(w, mapUserToDTO(updated), 200)
+	sendSuccess(w, MapUserToDTO(updated), 200)
 }
 
 // POST /api/auth/fcm-token - Add FCM token.
@@ -253,7 +294,7 @@ func (h *AuthHandler) LookupUsername(w http.ResponseWriter, r *http.Request) {
 	sendSuccess(w, dto.UsernameLookupResponse{Username: username, Email: *user.Email}, 200)
 }
 
-func mapUserToDTO(u *domain.User) dto.UserProfileResponse {
+func MapUserToDTO(u *domain.User) dto.UserProfileResponse {
 	if u == nil {
 		return dto.UserProfileResponse{}
 	}
@@ -292,7 +333,7 @@ func splitName(name string) []string {
 	return []string{name}
 }
 
-// POST /api/auth/me/photo - Upload profile photo (stub: S3 upload wired separately)
+	// POST /api/auth/me/photo - Upload profile photo (stub: Blob Storage upload wired separately)
 func (h *AuthHandler) UploadPhoto(w http.ResponseWriter, r *http.Request) {
 	sendError(w, "Photo upload not yet implemented", "NOT_IMPLEMENTED", 501)
 }
@@ -325,7 +366,7 @@ func (h *AuthHandler) Convert(w http.ResponseWriter, r *http.Request) {
 		sendError(w, "Failed to convert account", "INTERNAL_ERROR", 500)
 		return
 	}
-	sendSuccess(w, dto.AuthResponse{User: mapUserToDTO(updated), IsNewUser: false}, 200)
+	sendSuccess(w, dto.AuthResponse{User: MapUserToDTO(updated), IsNewUser: false}, 200)
 }
 
 // POST /api/auth/link-bookings - Link guest bookings to authenticated user by phone

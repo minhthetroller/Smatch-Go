@@ -1,310 +1,185 @@
-# ── VPC ───────────────────────────────────────────────────────────────────────
+# ── Virtual Network ───────────────────────────────────────────────────────────
 
-resource "aws_vpc" "main" {
-  cidr_block           = var.vpc_cidr
-  enable_dns_support   = true
-  enable_dns_hostnames = true
-
-  tags = { Name = "${var.app_name}-vpc" }
+resource "azurerm_virtual_network" "main" {
+  name                = "${var.app_name}-vnet"
+  resource_group_name = azurerm_resource_group.main.name
+  location            = azurerm_resource_group.main.location
+  address_space       = var.vnet_address_space
 }
 
-# ── Internet Gateway ──────────────────────────────────────────────────────────
+# ── Subnets ───────────────────────────────────────────────────────────────────
 
-resource "aws_internet_gateway" "main" {
-  vpc_id = aws_vpc.main.id
-
-  tags = { Name = "${var.app_name}-igw" }
+resource "azurerm_subnet" "public" {
+  count                = length(var.public_subnet_cidrs)
+  name                 = "${var.app_name}-snet-public-${count.index + 1}"
+  resource_group_name  = azurerm_resource_group.main.name
+  virtual_network_name = azurerm_virtual_network.main.name
+  address_prefixes     = [var.public_subnet_cidrs[count.index]]
 }
 
-# ── Public subnets (ALB) ─────────────────────────────────────────────────────
-
-resource "aws_subnet" "public" {
-  count             = length(var.public_subnet_cidrs)
-  vpc_id            = aws_vpc.main.id
-  cidr_block        = var.public_subnet_cidrs[count.index]
-  availability_zone = var.availability_zones[count.index]
-
-  map_public_ip_on_launch = true
-
-  tags = { Name = "${var.app_name}-public-${count.index + 1}" }
+resource "azurerm_subnet" "private_app" {
+  count                = length(var.private_app_subnet_cidrs)
+  name                 = "${var.app_name}-snet-app-${count.index + 1}"
+  resource_group_name  = azurerm_resource_group.main.name
+  virtual_network_name = azurerm_virtual_network.main.name
+  address_prefixes     = [var.private_app_subnet_cidrs[count.index]]
 }
 
-resource "aws_route_table" "public" {
-  vpc_id = aws_vpc.main.id
+# Delegate private data subnet to PostgreSQL Flexible Server
+resource "azurerm_subnet" "private_data" {
+  count                = length(var.private_data_subnet_cidrs)
+  name                 = "${var.app_name}-snet-data-${count.index + 1}"
+  resource_group_name  = azurerm_resource_group.main.name
+  virtual_network_name = azurerm_virtual_network.main.name
+  address_prefixes     = [var.private_data_subnet_cidrs[count.index]]
 
-  route {
-    cidr_block = "0.0.0.0/0"
-    gateway_id = aws_internet_gateway.main.id
+  delegation {
+    name = "postgresql-delegation"
+    service_delegation {
+      name = "Microsoft.DBforPostgreSQL/flexibleServers"
+      actions = [
+        "Microsoft.Network/virtualNetworks/subnets/join/action",
+      ]
+    }
+  }
+}
+
+# ── Public IP for NAT Gateway ─────────────────────────────────────────────────
+
+resource "azurerm_public_ip" "nat" {
+  name                = "${var.app_name}-pip-nat"
+  resource_group_name = azurerm_resource_group.main.name
+  location            = azurerm_resource_group.main.location
+  allocation_method   = "Static"
+  sku                 = "Standard"
+}
+
+resource "azurerm_nat_gateway" "main" {
+  name                    = "${var.app_name}-nat"
+  resource_group_name     = azurerm_resource_group.main.name
+  location                = azurerm_resource_group.main.location
+  sku_name                = "Standard"
+  idle_timeout_in_minutes = 10
+}
+
+resource "azurerm_nat_gateway_public_ip_association" "main" {
+  nat_gateway_id       = azurerm_nat_gateway.main.id
+  public_ip_address_id = azurerm_public_ip.nat.id
+}
+
+# Associate NAT Gateway with app subnets for outbound connectivity
+resource "azurerm_subnet_nat_gateway_association" "private_app" {
+  count          = length(azurerm_subnet.private_app)
+  subnet_id      = azurerm_subnet.private_app[count.index].id
+  nat_gateway_id = azurerm_nat_gateway.main.id
+}
+
+# ── Network Security Groups ───────────────────────────────────────────────────
+
+resource "azurerm_network_security_group" "app_gateway" {
+  name                = "${var.app_name}-nsg-agw"
+  resource_group_name = azurerm_resource_group.main.name
+  location            = azurerm_resource_group.main.location
+
+  security_rule {
+    name                       = "AllowHTTP"
+    priority                   = 100
+    direction                  = "Inbound"
+    access                     = "Allow"
+    protocol                   = "Tcp"
+    source_port_range          = "*"
+    destination_port_range     = "80"
+    source_address_prefix      = "Internet"
+    destination_address_prefix = "*"
   }
 
-  tags = { Name = "${var.app_name}-rt-public" }
+  security_rule {
+    name                       = "AllowHTTPS"
+    priority                   = 110
+    direction                  = "Inbound"
+    access                     = "Allow"
+    protocol                   = "Tcp"
+    source_port_range          = "*"
+    destination_port_range     = "443"
+    source_address_prefix      = "Internet"
+    destination_address_prefix = "*"
+  }
 }
 
-resource "aws_route_table_association" "public" {
-  count          = length(aws_subnet.public)
-  subnet_id      = aws_subnet.public[count.index].id
-  route_table_id = aws_route_table.public.id
+resource "azurerm_subnet_network_security_group_association" "public" {
+  for_each                  = { for i, s in azurerm_subnet.public : i => s.id }
+  subnet_id                 = each.value
+  network_security_group_id = azurerm_network_security_group.app_gateway.id
 }
 
-# ── Private app subnets (ASG / EC2 instances) ─────────────────────────────────
+resource "azurerm_network_security_group" "backend" {
+  name                = "${var.app_name}-nsg-backend"
+  resource_group_name = azurerm_resource_group.main.name
+  location            = azurerm_resource_group.main.location
 
-resource "aws_subnet" "private_app" {
-  count             = length(var.private_app_subnet_cidrs)
-  vpc_id            = aws_vpc.main.id
-  cidr_block        = var.private_app_subnet_cidrs[count.index]
-  availability_zone = var.availability_zones[count.index]
-
-  tags = { Name = "${var.app_name}-private-app-${count.index + 1}" }
-}
-
-resource "aws_route_table" "private_app" {
-  vpc_id = aws_vpc.main.id
-
-  tags = { Name = "${var.app_name}-rt-private-app" }
-}
-
-resource "aws_route" "private_app_nat" {
-  count                  = var.aws_endpoint == "" ? 1 : 0
-  route_table_id         = aws_route_table.private_app.id
-  destination_cidr_block = "0.0.0.0/0"
-  nat_gateway_id         = aws_nat_gateway.main[0].id
-}
-
-resource "aws_route_table_association" "private_app" {
-  count          = length(aws_subnet.private_app)
-  subnet_id      = aws_subnet.private_app[count.index].id
-  route_table_id = aws_route_table.private_app.id
-}
-
-# ── Private data subnets (RDS, ElastiCache) ───────────────────────────────────
-
-resource "aws_subnet" "private" {
-  count             = length(var.private_subnet_cidrs)
-  vpc_id            = aws_vpc.main.id
-  cidr_block        = var.private_subnet_cidrs[count.index]
-  availability_zone = var.availability_zones[count.index]
-
-  tags = { Name = "${var.app_name}-private-data-${count.index + 1}" }
-}
-
-resource "aws_route_table" "private" {
-  vpc_id = aws_vpc.main.id
-
-  tags = { Name = "${var.app_name}-rt-private-data" }
-}
-
-# NAT Gateway — allows private subnets outbound internet access
-# Only created for real AWS deployments (not needed for LocalStack)
-resource "aws_eip" "nat" {
-  count  = var.aws_endpoint == "" ? 1 : 0
-  domain = "vpc"
-  tags   = { Name = "${var.app_name}-nat-eip" }
-}
-
-resource "aws_nat_gateway" "main" {
-  count         = var.aws_endpoint == "" ? 1 : 0
-  allocation_id = aws_eip.nat[0].id
-  subnet_id     = aws_subnet.public[0].id
-  tags          = { Name = "${var.app_name}-nat" }
-  depends_on    = [aws_internet_gateway.main]
-}
-
-resource "aws_route" "private_nat" {
-  count                  = var.aws_endpoint == "" ? 1 : 0
-  route_table_id         = aws_route_table.private.id
-  destination_cidr_block = "0.0.0.0/0"
-  nat_gateway_id         = aws_nat_gateway.main[0].id
-}
-
-resource "aws_route_table_association" "private" {
-  count          = length(aws_subnet.private)
-  subnet_id      = aws_subnet.private[count.index].id
-  route_table_id = aws_route_table.private.id
-}
-
-# ── Security Groups ───────────────────────────────────────────────────────────
-
-# ALB — public HTTP/HTTPS access
-resource "aws_security_group" "alb" {
-  name        = "${var.app_name}-sg-alb"
-  description = "Allow inbound HTTP to ALB"
-  vpc_id      = aws_vpc.main.id
-
-  ingress {
-    description = "HTTP"
-    from_port   = 80
-    to_port     = 80
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
+  security_rule {
+    name                       = "AllowAzureLB"
+    priority                   = 100
+    direction                  = "Inbound"
+    access                     = "Allow"
+    protocol                   = "Tcp"
+    source_port_range          = "*"
+    destination_port_range     = tostring(var.backend_port)
+    source_address_prefix      = "AzureLoadBalancer"
+    destination_address_prefix = "*"
   }
 
-  ingress {
-    description = "HTTPS"
-    from_port   = 443
-    to_port     = 443
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
+  security_rule {
+    name                       = "AllowInternetInbound"
+    priority                   = 110
+    direction                  = "Inbound"
+    access                     = "Allow"
+    protocol                   = "Tcp"
+    source_port_range          = "*"
+    destination_port_range     = tostring(var.backend_port)
+    source_address_prefix      = "Internet"
+    destination_address_prefix = "*"
   }
 
-  egress {
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
-    cidr_blocks = ["0.0.0.0/0"]
+  security_rule {
+    name                       = "AllowInternetHTTPS"
+    priority                   = 120
+    direction                  = "Inbound"
+    access                     = "Allow"
+    protocol                   = "Tcp"
+    source_port_range          = "*"
+    destination_port_range     = "443"
+    source_address_prefix      = "Internet"
+    destination_address_prefix = "*"
   }
-
-  tags = { Name = "${var.app_name}-sg-alb" }
 }
 
-# Backend — allow traffic from ALB only
-resource "aws_security_group" "backend" {
-  name        = "${var.app_name}-sg-backend"
-  description = "Allow inbound from ALB to backend port"
-  vpc_id      = aws_vpc.main.id
-
-  ingress {
-    description     = "Backend API"
-    from_port       = var.backend_port
-    to_port         = var.backend_port
-    protocol        = "tcp"
-    security_groups = [aws_security_group.alb.id]
-  }
-
-  egress {
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  tags = { Name = "${var.app_name}-sg-backend" }
+resource "azurerm_subnet_network_security_group_association" "private_app" {
+  for_each                  = { for i, s in azurerm_subnet.private_app : i => s.id }
+  subnet_id                 = each.value
+  network_security_group_id = azurerm_network_security_group.backend.id
 }
 
-# RDS — allow only from backend
-resource "aws_security_group" "rds" {
-  name        = "${var.app_name}-sg-rds"
-  description = "Allow Postgres from backend"
-  vpc_id      = aws_vpc.main.id
+resource "azurerm_network_security_group" "postgres" {
+  name                = "${var.app_name}-nsg-postgres"
+  resource_group_name = azurerm_resource_group.main.name
+  location            = azurerm_resource_group.main.location
 
-  ingress {
-    description     = "Postgres"
-    from_port       = var.db_port
-    to_port         = var.db_port
-    protocol        = "tcp"
-    security_groups = [aws_security_group.backend.id]
+  security_rule {
+    name                       = "AllowFromApp"
+    priority                   = 100
+    direction                  = "Inbound"
+    access                     = "Allow"
+    protocol                   = "Tcp"
+    source_port_range          = "*"
+    destination_port_range     = tostring(var.db_port)
+    source_address_prefixes    = var.private_app_subnet_cidrs
+    destination_address_prefix = "*"
   }
-
-  egress {
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  tags = { Name = "${var.app_name}-sg-rds" }
 }
 
-# Redis — allow only from backend
-resource "aws_security_group" "redis" {
-  name        = "${var.app_name}-sg-redis"
-  description = "Allow Redis from backend"
-  vpc_id      = aws_vpc.main.id
-
-  ingress {
-    description     = "Redis"
-    from_port       = var.redis_port
-    to_port         = var.redis_port
-    protocol        = "tcp"
-    security_groups = [aws_security_group.backend.id]
-  }
-
-  egress {
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  tags = { Name = "${var.app_name}-sg-redis" }
-}
-
-# Admin backend — allow traffic from ALB only
-resource "aws_security_group" "admin" {
-  name        = "${var.app_name}-sg-admin"
-  description = "Allow inbound from ALB to admin backend port"
-  vpc_id      = aws_vpc.main.id
-
-  ingress {
-    description     = "Admin API"
-    from_port       = var.backend_port
-    to_port         = var.backend_port
-    protocol        = "tcp"
-    security_groups = [aws_security_group.alb.id]
-  }
-
-  egress {
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  tags = { Name = "${var.app_name}-sg-admin" }
-}
-
-# pg_tileserv — allow traffic from ALB to nginx port
-resource "aws_security_group" "tileserv" {
-  name        = "${var.app_name}-sg-tileserv"
-  description = "Allow inbound from ALB to tileserv nginx port"
-  vpc_id      = aws_vpc.main.id
-
-  ingress {
-    description     = "nginx tileserv"
-    from_port       = var.tileserv_nginx_port
-    to_port         = var.tileserv_nginx_port
-    protocol        = "tcp"
-    security_groups = [aws_security_group.alb.id]
-  }
-
-  egress {
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  tags = { Name = "${var.app_name}-sg-tileserv" }
-}
-
-# Allow admin backend → primary RDS
-resource "aws_security_group_rule" "rds_from_admin" {
-  type                     = "ingress"
-  description              = "Postgres from admin backend"
-  from_port                = var.db_port
-  to_port                  = var.db_port
-  protocol                 = "tcp"
-  source_security_group_id = aws_security_group.admin.id
-  security_group_id        = aws_security_group.rds.id
-}
-
-# Allow tileserv → RDS (read replica direct connection)
-resource "aws_security_group_rule" "rds_from_tileserv" {
-  type                     = "ingress"
-  description              = "Postgres from tileserv (pg_tileserv direct)"
-  from_port                = var.db_port
-  to_port                  = var.db_port
-  protocol                 = "tcp"
-  source_security_group_id = aws_security_group.tileserv.id
-  security_group_id        = aws_security_group.rds.id
-}
-
-# Allow admin backend → Redis
-resource "aws_security_group_rule" "redis_from_admin" {
-  type                     = "ingress"
-  description              = "Redis from admin backend"
-  from_port                = var.redis_port
-  to_port                  = var.redis_port
-  protocol                 = "tcp"
-  source_security_group_id = aws_security_group.admin.id
-  security_group_id        = aws_security_group.redis.id
+resource "azurerm_subnet_network_security_group_association" "private_data" {
+  for_each                  = { for i, s in azurerm_subnet.private_data : i => s.id }
+  subnet_id                 = each.value
+  network_security_group_id = azurerm_network_security_group.postgres.id
 }

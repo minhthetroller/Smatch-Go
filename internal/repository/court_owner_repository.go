@@ -3,9 +3,11 @@ package repository
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/smatch/badminton-backend/internal/domain"
 )
@@ -139,6 +141,131 @@ func (r *CourtOwnerRepository) OpenAllSubCourts(ctx context.Context, courtID, da
 		  AND date = $2::date
 	`, courtID, date)
 	return err
+}
+
+func (r *CourtOwnerRepository) GetCourtByOwner(ctx context.Context, ownerID, courtID string) (*domain.Court, error) {
+	row := r.db.QueryRow(ctx, `
+		SELECT id, name, description, phone_numbers,
+		       address_street, address_ward, address_district, address_city,
+		       details, opening_hours,
+		       ST_Y(location) AS lat,
+		       ST_X(location) AS lng,
+		       created_at, updated_at
+		FROM courts
+		WHERE id = $1::uuid AND owner_user_id = $2::uuid
+	`, courtID, ownerID)
+
+	c := &domain.Court{}
+	err := row.Scan(
+		&c.ID, &c.Name, &c.Description, &c.PhoneNumbers,
+		&c.AddressStreet, &c.AddressWard, &c.AddressDistrict, &c.AddressCity,
+		&c.Details, &c.OpeningHours, &c.Lat, &c.Lng,
+		&c.CreatedAt, &c.UpdatedAt,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	return c, err
+}
+
+func (r *CourtOwnerRepository) ListSubCourtsByCourt(ctx context.Context, courtID string) ([]*domain.SubCourt, error) {
+	rows, err := r.db.Query(ctx, `
+		SELECT id, court_id, name, description, is_active, created_at, updated_at
+		FROM sub_courts
+		WHERE court_id = $1::uuid
+		ORDER BY name
+	`, courtID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var items []*domain.SubCourt
+	for rows.Next() {
+		sc := &domain.SubCourt{}
+		if err := rows.Scan(&sc.ID, &sc.CourtID, &sc.Name, &sc.Description, &sc.IsActive, &sc.CreatedAt, &sc.UpdatedAt); err != nil {
+			return nil, err
+		}
+		items = append(items, sc)
+	}
+	return items, rows.Err()
+}
+
+func (r *CourtOwnerRepository) ListPricingRulesByCourt(ctx context.Context, courtID string) ([]*domain.PricingRule, error) {
+	rows, err := r.db.Query(ctx, `
+		SELECT id, court_id, name, day_type, start_time, end_time, price_per_hour, is_active, created_at, updated_at
+		FROM pricing_rules
+		WHERE court_id = $1::uuid AND is_active = true
+		ORDER BY day_type, start_time
+	`, courtID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var items []*domain.PricingRule
+	for rows.Next() {
+		pr := &domain.PricingRule{}
+		if err := rows.Scan(&pr.ID, &pr.CourtID, &pr.Name, &pr.DayType, &pr.StartTime, &pr.EndTime, &pr.PricePerHour, &pr.IsActive, &pr.CreatedAt, &pr.UpdatedAt); err != nil {
+			return nil, err
+		}
+		items = append(items, pr)
+	}
+	return items, rows.Err()
+}
+
+func (r *CourtOwnerRepository) ListUpcomingClosuresByCourt(ctx context.Context, courtID string, from time.Time) ([]*domain.SubCourtClosure, error) {
+	rows, err := r.db.Query(ctx, `
+		SELECT sc.id, sc.sub_court_id, sc.date, sc.start_time, sc.end_time, sc.reason, sc.created_at
+		FROM sub_court_closures sc
+		JOIN sub_courts s ON sc.sub_court_id = s.id
+		WHERE s.court_id = $1::uuid AND sc.date >= $2::date
+		ORDER BY sc.date, sc.start_time
+		LIMIT 100
+	`, courtID, from)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var items []*domain.SubCourtClosure
+	for rows.Next() {
+		cl := &domain.SubCourtClosure{}
+		if err := rows.Scan(&cl.ID, &cl.SubCourtID, &cl.Date, &cl.StartTime, &cl.EndTime, &cl.Reason, &cl.CreatedAt); err != nil {
+			return nil, err
+		}
+		items = append(items, cl)
+	}
+	return items, rows.Err()
+}
+
+func (r *CourtOwnerRepository) GetCourtStatsDaily(ctx context.Context, courtID string, from, to time.Time) ([]*domain.CourtStatsDaily, error) {
+	rows, err := r.db.Query(ctx, `
+		SELECT DATE(b.date) AS day,
+		       COUNT(*) FILTER (WHERE b.status IN ('confirmed', 'completed')) AS bookings,
+		       COALESCE(SUM(b.total_price) FILTER (WHERE b.status IN ('confirmed', 'completed')), 0) AS revenue,
+		       COUNT(*) FILTER (WHERE b.status = 'cancelled') AS cancellations
+		FROM bookings b
+		JOIN sub_courts sc ON b.sub_court_id = sc.id
+		WHERE sc.court_id = $1::uuid
+		  AND b.date BETWEEN $2::date AND $3::date
+		GROUP BY DATE(b.date)
+		ORDER BY day
+	`, courtID, from, to)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var items []*domain.CourtStatsDaily
+	for rows.Next() {
+		d := &domain.CourtStatsDaily{}
+		if err := rows.Scan(&d.Date, &d.Bookings, &d.Revenue, &d.Cancellations); err != nil {
+			return nil, err
+		}
+		items = append(items, d)
+	}
+	return items, rows.Err()
 }
 
 func (r *CourtOwnerRepository) CreateCourtFromSpecs(ctx context.Context, ownerID string, specs domain.OperationalSpecs) (string, error) {

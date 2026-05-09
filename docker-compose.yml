@@ -32,6 +32,14 @@ services:
       timeout: 3s
       retries: 10
 
+  azurite:
+    image: mcr.microsoft.com/azure-storage/azurite:latest
+    command: "azurite-blob --blobHost 0.0.0.0"
+    ports:
+      - "10000:10000"
+    networks:
+      - smatch-net
+
   pg_tileserv:
     image: pramsey/pg_tileserv:latest
     environment:
@@ -57,6 +65,9 @@ services:
       - REDIS_HOST=redis
       - REDIS_PORT=6379
       - TILE_SERVER_URL=http://pg_tileserv:7800
+      - AZURE_STORAGE_ACCOUNT=devstoreaccount1
+      - AZURE_STORAGE_KEY=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==
+      - AZURE_BLOB_ENDPOINT=http://azurite:10000/devstoreaccount1
     volumes:
       - ./smatch-badminton-firebase-adminsdk-fbsvc-fb65abab30.json:/app/smatch-badminton-firebase-adminsdk-fbsvc-fb65abab30.json:ro
     ports:
@@ -85,6 +96,9 @@ services:
       - REDIS_PORT=6379
       - NODE_ENV=development
       - ADMIN_WEB_ORIGIN=http://localhost:3001
+      - AZURE_STORAGE_ACCOUNT=devstoreaccount1
+      - AZURE_STORAGE_KEY=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==
+      - AZURE_BLOB_ENDPOINT=http://azurite:10000/devstoreaccount1
     volumes:
       - ./smatch-badminton-firebase-adminsdk-fbsvc-fb65abab30.json:/app/smatch-badminton-firebase-adminsdk-fbsvc-fb65abab30.json:ro
     ports:

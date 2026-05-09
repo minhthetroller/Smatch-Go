@@ -41,19 +41,29 @@ func (h *AdminHandler) ListApplications(w http.ResponseWriter, r *http.Request) 
 
 func (h *AdminHandler) GetApplication(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
-	// Reuse list with empty status and single item; or add FindByID to service
-	items, _, err := h.service.ListApplications(r.Context(), "", 1, 1)
+	app, err := h.service.GetApplication(r.Context(), id)
 	if err != nil {
 		sendAppError(w, err)
 		return
 	}
-	for _, item := range items {
-		if item.ID == id {
-			sendSuccess(w, item, 200)
-			return
-		}
+	if app == nil {
+		sendError(w, "Application not found", "NOT_FOUND", 404)
+		return
 	}
-	sendError(w, "Application not found", "NOT_FOUND", 404)
+	sendSuccess(w, app, 200)
+}
+
+func (h *AdminHandler) GetTimeseriesStats(w http.ResponseWriter, r *http.Request) {
+	rangeParam := r.URL.Query().Get("range")
+	if rangeParam == "" {
+		rangeParam = "1d"
+	}
+	stats, err := h.service.GetTimeseriesStats(r.Context(), rangeParam)
+	if err != nil {
+		sendAppError(w, err)
+		return
+	}
+	sendSuccess(w, stats, 200)
 }
 
 func (h *AdminHandler) ReviewApplication(w http.ResponseWriter, r *http.Request) {

@@ -23,7 +23,7 @@ import (
 	fbpkg "github.com/smatch/badminton-backend/platform/firebase"
 	pgpkg "github.com/smatch/badminton-backend/platform/postgres"
 	redispkg "github.com/smatch/badminton-backend/platform/redis"
-	s3pkg "github.com/smatch/badminton-backend/platform/s3"
+	blobpkg "github.com/smatch/badminton-backend/platform/blob"
 	zalopkg "github.com/smatch/badminton-backend/platform/zalopay"
 	"go.uber.org/zap"
 )
@@ -77,17 +77,16 @@ func main() {
 	}
 	logger.Info("firebase connected")
 
-	// ── S3 ──────────────────────────────────────────────────────────────────
-	s3Client, err := s3pkg.New(ctx, s3pkg.Config{
-		Region:          cfg.AWS.Region,
-		AccessKeyID:     cfg.AWS.AccessKeyID,
-		SecretAccessKey: cfg.AWS.SecretAccessKey,
-		Endpoint:        cfg.AWS.Endpoint,
-		BucketProfile:   cfg.AWS.BucketProfile,
-		BucketMatches:   cfg.AWS.BucketMatches,
+	// ── Blob Storage ──────────────────────────────────────────────────────────
+	blobClient, err := blobpkg.New(ctx, blobpkg.Config{
+		AccountName:     cfg.Blob.AccountName,
+		AccountKey:      cfg.Blob.AccountKey,
+		Endpoint:        cfg.Blob.Endpoint,
+		ContainerProfile:     cfg.Blob.ContainerProfile,
+		ContainerMatches:     cfg.Blob.ContainerMatches,
 	})
 	if err != nil {
-		logger.Warn("s3 unavailable", zap.Error(err))
+		logger.Warn("blob storage unavailable", zap.Error(err))
 	}
 
 	// ── ZaloPay ─────────────────────────────────────────────────────────────
@@ -136,8 +135,8 @@ func main() {
 	proxyH := handler.NewProxyHandler(cfg.TileServerURL, cfg.TileLayerID)
 	wsH := handler.NewWebSocketHandler(hub)
 
-	// S3 available for future image upload use
-	_ = s3Client
+	// Blob storage available for future image upload use
+	_ = blobClient
 
 	// ── Wire payment auto-cancel on WS disconnect ────────────────────────────
 	hub.OnPaymentDisconnect = func(paymentID string) {
@@ -216,12 +215,12 @@ func main() {
 		})
 
 		// ── Payments ──────────────────────────────────────────────────────
-		r.Route("/payments", func(r chi.Router) {
-			r.With(authMw.RequireRegisteredUser).Post("/create", paymentH.CreatePayment)
-			r.With(httprate.LimitByIP(10, time.Minute)).Post("/callback", paymentH.Callback)
-			r.With(authMw.RequireAuth).Get("/{id}", paymentH.GetPayment)
-			r.With(authMw.RequireAuth).Get("/{id}/status", paymentH.GetPaymentStatus)
-			r.With(authMw.RequireAuth).Post("/{id}/cancel", paymentH.CancelPayment)
+		registerPaymentRoutes(r, authMw, paymentRouteHandlers{
+			create:    paymentH.CreatePayment,
+			callback:  paymentH.Callback,
+			get:       paymentH.GetPayment,
+			getStatus: paymentH.GetPaymentStatus,
+			cancel:    paymentH.CancelPayment,
 		})
 
 		// ── Matches ───────────────────────────────────────────────────────

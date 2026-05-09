@@ -67,3 +67,18 @@ func (h *BusinessProfileHandler) GetMine(w http.ResponseWriter, r *http.Request)
 
 	sendSuccess(w, resp, 200)
 }
+
+func (h *BusinessProfileHandler) DeleteMine(w http.ResponseWriter, r *http.Request) {
+	user := middleware.UserFromContext(r.Context())
+	if user == nil {
+		sendError(w, "Unauthorized", "UNAUTHORIZED", 401)
+		return
+	}
+
+	if err := h.service.DeleteApplication(r.Context(), user.ID); err != nil {
+		sendAppError(w, err)
+		return
+	}
+
+	w.WriteHeader(204)
+}

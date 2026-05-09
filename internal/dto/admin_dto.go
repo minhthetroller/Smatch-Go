@@ -36,3 +36,17 @@ type CourtOwnerStatsResponse struct {
 	TotalBookings  int64  `json:"totalBookings"`
 	TotalRevenue   int64  `json:"totalRevenue"`
 }
+
+// TimeseriesPoint for chart data
+type TimeseriesPoint struct {
+	Label   string `json:"label"`
+	Value   int64  `json:"value"`
+}
+
+// AdminTimeseriesResponse sent to admin web app charts
+type AdminTimeseriesResponse struct {
+	Range        string            `json:"range"`
+	Signups      []TimeseriesPoint `json:"signups"`
+	ActiveUsers  []TimeseriesPoint `json:"activeUsers"`
+	Revenue      []TimeseriesPoint `json:"revenue"`
+}

@@ -1,6 +1,6 @@
 # smatch-backend-go
 
-Badminton court booking platform backend. Go 1.23, chi router, PostgreSQL (pgx/v5), Redis, Firebase Auth, ZaloPay, AWS S3, pg_tileserv.
+Badminton court booking platform backend. Go 1.23, chi router, PostgreSQL (pgx/v5), Redis, Firebase Auth, ZaloPay, Azure Blob Storage, pg_tileserv.
 
 ## Architecture
 
@@ -12,7 +12,7 @@ Strict layers: handler → service → repository → platform.
 - `internal/domain/` — sentinel errors + `AppError` struct
 - `internal/handler/response.go` — standard envelope format; use `sendAppError` to map domain errors to HTTP codes
 - `internal/repository/` — raw SQL with pgx (`pgx.CollectRows`, `pgx.RowToStructByName`); no ORM
-- `platform/` — external client initialization (postgres, redis, firebase, s3, zalopay)
+- `platform/` — external client initialization (postgres, redis, firebase, blob, zalopay)
 
 ## Developer Commands
 
@@ -37,8 +37,8 @@ Copy `.env.example` → `.env`. `internal/config/config.go` loads it automatical
 
 Key gotchas:
 - `FIREBASE_CREDENTIALS_FILE` defaults to `smatch-badminton-firebase-adminsdk-fbsvc-fb65abab30.json` in repo root. The file is present but gitignored — **do not commit changes to it**.
-- `AWS_ENDPOINT` is only needed for LocalStack; leave blank for real AWS.
-- `REDIS_TLS_ENABLED` must be `true` in production (Redis Cloud, Upstash).
+- `AZURE_BLOB_ENDPOINT` is only needed for Azurite; leave blank for real Azure.
+- `REDIS_TLS_ENABLED` must be `true` in production (Azure Cache for Redis enforces TLS).
 
 ## Migrations
 
@@ -46,17 +46,17 @@ Key gotchas:
 - Always create `.up.sql` and `.down.sql` pairs.
 - Sequential numbering: `000001_init.up.sql`, `000001_init.down.sql`.
 
-## LocalStack / Full Local Infra
+## Local Development / Azurite
 
 ```bash
-# One-time bootstrap: provisions LocalStack RDS, ElastiCache, ALB, ASG, S3, writes .env.localstack
-LOCALSTACK_AUTH_TOKEN=... bash infra/scripts/init.sh
+# One-time bootstrap: starts Postgres, Redis, Azurite, runs migrations, writes .env.azurite
+bash infra/scripts/init.sh
 ```
 
-Requires: `docker`, `psql`, `jq`, `tflocal`, `awslocal`. After init, run locally against LocalStack with:
+Requires: `docker`, `psql`, `az`. After init, run locally against local services with:
 
 ```bash
-cp .env.localstack .env
+cp .env.azurite .env
 go run ./cmd/server
 ```
 
@@ -77,11 +77,15 @@ go run ./cmd/server
 ## Operational Notes
 
 - Redis is **optional at runtime**: the server warns and continues without it; rate limiting (`go-chi/httprate`) is disabled when Redis is nil.
-- S3 client is initialized in `cmd/server/main.go` but currently discarded (`_ = s3Client`) — reserved for future image uploads.
+- Blob Storage client is initialized in `cmd/server/main.go` but currently discarded (`_ = blobClient`) — reserved for future image uploads.
 - WebSocket hub (`internal/websocket`) wires `OnPaymentDisconnect` to auto-cancel payments via the payment handler.
 - Admin endpoints require the `ADMIN_SECRET` via `X-Admin-Secret` header when Firebase custom claims are not set.
 - `docker-compose.yml` runs an nginx reverse proxy on port `8080` routing `/api/map-tiles/*` to `pg_tileserv:7800` and everything else to `backend:3000`.
 
 ## Terraform
 
-Target AWS region: `ap-southeast-1`. Do not commit `terraform.tfstate`, `terraform.tfvars`, or `tfplan.out`.
+Target Azure region: `southeastasia`. Do not commit `terraform.tfstate`, `terraform.tfvars`, or `tfplan.out`.
+
+## Agent Safety Rules
+
+- **Don't ever make file deletions without asking the user or getting explicit permission.** If a deletion seems necessary, immediately pause the chat and ask.

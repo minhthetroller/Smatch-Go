@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
@@ -23,7 +24,7 @@ import (
 	fbpkg "github.com/smatch/badminton-backend/platform/firebase"
 	pgpkg "github.com/smatch/badminton-backend/platform/postgres"
 	redispkg "github.com/smatch/badminton-backend/platform/redis"
-	s3pkg "github.com/smatch/badminton-backend/platform/s3"
+	blobpkg "github.com/smatch/badminton-backend/platform/blob"
 )
 
 func main() {
@@ -75,18 +76,17 @@ func main() {
 	}
 	logger.Info("firebase connected")
 
-	// S3
-	s3Client, err := s3pkg.New(ctx, s3pkg.Config{
-		Region:             cfg.AWS.Region,
-		AccessKeyID:        cfg.AWS.AccessKeyID,
-		SecretAccessKey:    cfg.AWS.SecretAccessKey,
-		Endpoint:           cfg.AWS.Endpoint,
-		BucketProfile:      cfg.AWS.BucketProfile,
-		BucketMatches:      cfg.AWS.BucketMatches,
-		BucketBusinessDocs: cfg.AWS.BucketBusinessDocs,
+	// Blob Storage
+	blobClient, err := blobpkg.New(ctx, blobpkg.Config{
+		AccountName:           cfg.Blob.AccountName,
+		AccountKey:            cfg.Blob.AccountKey,
+		Endpoint:              cfg.Blob.Endpoint,
+		ContainerProfile:      cfg.Blob.ContainerProfile,
+		ContainerMatches:      cfg.Blob.ContainerMatches,
+		ContainerBusinessDocs: cfg.Blob.ContainerBusinessDocs,
 	})
 	if err != nil {
-		logger.Warn("s3 unavailable", zap.Error(err))
+		logger.Warn("blob storage unavailable", zap.Error(err))
 	}
 
 	// Repositories
@@ -97,7 +97,7 @@ func main() {
 	courtRepo := repository.NewCourtRepository(pool)
 
 	// Services
-	uploadSvc := service.NewUploadService(s3Client, cfg.AWS.BucketBusinessDocs)
+	uploadSvc := service.NewUploadService(blobClient, cfg.Blob.ContainerBusinessDocs)
 	bpSvc := service.NewBusinessProfileService(bpRepo, userRepo, uploadSvc)
 	coSvc := service.NewCourtOwnerService(coRepo, courtRepo)
 	adminSvc := service.NewAdminService(bpRepo, userRepo, coRepo, adminRepo)
@@ -119,14 +119,17 @@ func main() {
 	r.Use(chimiddleware.RequestSize(10 * 1024 * 1024))
 	r.Use(chimiddleware.Timeout(30 * time.Second))
 	r.Use(middleware.SecureHeaders)
+	allowedOrigins := []string{cfg.AdminWebOrigin}
+	if cfg.NodeEnv == "development" {
+		allowedOrigins = append(allowedOrigins, "http://localhost:5173")
+	}
 	r.Use(cors.New(cors.Options{
-		AllowedOrigins:   []string{cfg.AdminWebOrigin},
+		AllowedOrigins:   allowedOrigins,
 		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"},
-		AllowedHeaders:   []string{"Authorization", "Content-Type", "X-Admin-Secret", "X-CSRF-Token"},
+		AllowedHeaders:   []string{"Authorization", "Content-Type", "X-Admin-Secret"},
 		AllowCredentials: true,
 		MaxAge:           300,
 	}).Handler)
-	r.Use(middleware.CSRFProtection) // security gate before rate limiting
 	if redisClient != nil {
 		r.Use(httprate.LimitByIP(100, time.Minute))
 	}
@@ -141,21 +144,63 @@ func main() {
 		w.Write([]byte(`{"version":"1.0.0","service":"smatch-admin"}`)) //nolint:errcheck
 	})
 
-	// Owner routes
+	// Auth handler (for verify endpoint)
+	authH := handler.NewAuthHandler(fbClient, userRepo, nil)
+
+	// Public auth route (no auth required)
+	r.Post("/api/auth/verify", authH.Verify)
+
+	// Auth routes (require valid Firebase token)
+	r.Route("/api/auth", func(r chi.Router) {
+		r.Use(authMw.RequireAuth)
+		r.Get("/me", func(w http.ResponseWriter, r *http.Request) {
+			user := middleware.UserFromContext(r.Context())
+			roles, _ := userRepo.GetRoles(r.Context(), user.ID)
+			dto := handler.MapUserToDTO(user)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(200)
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"success": true,
+				"data": map[string]interface{}{
+					"id":          dto.ID,
+					"firebaseUid": dto.FirebaseUID,
+					"email":       dto.Email,
+					"username":    dto.Username,
+					"provider":    dto.Provider,
+					"isAnonymous": dto.IsAnonymous,
+					"firstName":   dto.FirstName,
+					"lastName":    dto.LastName,
+					"gender":      dto.Gender,
+					"phoneNumber": dto.PhoneNumber,
+					"photoUrl":    dto.PhotoURL,
+					"address":     dto.Address,
+					"roles":       roles,
+					"createdAt":   dto.CreatedAt,
+					"updatedAt":   dto.UpdatedAt,
+				},
+			})
+		})
+	})
+
+	// Owner routes — business profile open to all authenticated users;
+	// court management requires approved court_owner role.
 	r.Route("/api/owner", func(r chi.Router) {
 		r.Use(authMw.RequireAuth)
-		r.Use(authMw.RequireCourtOwner)
-
 		r.Post("/business-profile", bpH.Submit)
 		r.Get("/business-profile", bpH.GetMine)
 		r.Put("/business-profile", bpH.Submit)
+		r.Delete("/business-profile", bpH.DeleteMine)
 
-		r.Get("/courts", coH.ListCourts)
-		r.Get("/courts/{id}/stats", coH.GetCourtStats)
-		r.Post("/courts/{id}/close", coH.CloseCourt)
-		r.Post("/courts/{id}/open", coH.OpenCourt)
-		r.Post("/courts/{id}/subcourts/{subId}/close", coH.CloseSubCourt)
-		r.Post("/courts/{id}/subcourts/{subId}/open", coH.OpenSubCourt)
+		r.Group(func(r chi.Router) {
+			r.Use(authMw.RequireCourtOwner)
+			r.Get("/courts", coH.ListCourts)
+			r.Get("/courts/{id}", coH.GetCourt)
+			r.Get("/courts/{id}/stats", coH.GetCourtStats)
+			r.Post("/courts/{id}/close", coH.CloseCourt)
+			r.Post("/courts/{id}/open", coH.OpenCourt)
+			r.Post("/courts/{id}/subcourts/{subId}/close", coH.CloseSubCourt)
+			r.Post("/courts/{id}/subcourts/{subId}/open", coH.OpenSubCourt)
+		})
 	})
 
 	// Admin routes
@@ -168,6 +213,7 @@ func main() {
 		r.Post("/business-profiles/{id}/reject", adminH.ReviewApplication)
 		r.Post("/business-profiles/{id}/request-resubmit", adminH.ReviewApplication)
 		r.Get("/stats", adminH.GetStats)
+		r.Get("/stats/timeseries", adminH.GetTimeseriesStats)
 	})
 
 	// Server

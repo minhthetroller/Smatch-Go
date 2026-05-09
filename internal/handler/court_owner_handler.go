@@ -28,6 +28,17 @@ func (h *CourtOwnerHandler) ListCourts(w http.ResponseWriter, r *http.Request) {
 	sendSuccess(w, courts, 200)
 }
 
+func (h *CourtOwnerHandler) GetCourt(w http.ResponseWriter, r *http.Request) {
+	user := middleware.UserFromContext(r.Context())
+	courtID := chi.URLParam(r, "id")
+	court, err := h.service.GetCourt(r.Context(), user.ID, courtID)
+	if err != nil {
+		sendAppError(w, err)
+		return
+	}
+	sendSuccess(w, court, 200)
+}
+
 func (h *CourtOwnerHandler) GetCourtStats(w http.ResponseWriter, r *http.Request) {
 	user := middleware.UserFromContext(r.Context())
 	courtID := chi.URLParam(r, "id")
@@ -35,8 +46,9 @@ func (h *CourtOwnerHandler) GetCourtStats(w http.ResponseWriter, r *http.Request
 	if period == "" {
 		period = "today"
 	}
+	granularity := r.URL.Query().Get("granularity")
 
-	stats, err := h.service.GetCourtStats(r.Context(), user.ID, courtID, period)
+	stats, err := h.service.GetCourtStats(r.Context(), user.ID, courtID, period, granularity)
 	if err != nil {
 		sendAppError(w, err)
 		return

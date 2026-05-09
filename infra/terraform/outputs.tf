@@ -1,69 +1,67 @@
-output "alb_dns_name" {
-  description = "DNS name of the Application Load Balancer. Use http://<value> to reach the API."
-  value       = aws_lb.main.dns_name
+output "load_balancer_ip" {
+  description = "Public IP of the Azure Load Balancer"
+  value       = azurerm_public_ip.lb.ip_address
 }
 
 output "api_url" {
-  description = "Public API URL (domain if configured, otherwise ALB DNS over HTTP)"
-  value       = var.create_dns ? "https://${local.api_fqdn}" : "http://${aws_lb.main.dns_name}"
+  description = "Public API URL"
+  value       = "http://${azurerm_public_ip.lb.ip_address}"
 }
 
-output "rds_endpoint" {
-  description = "RDS PostgreSQL endpoint (host only, no port)"
-  value       = aws_db_instance.main.address
+output "postgres_fqdn" {
+  description = "PostgreSQL Flexible Server FQDN"
+  value       = azurerm_postgresql_flexible_server.main.fqdn
 }
 
-output "rds_port" {
-  value = aws_db_instance.main.port
+output "postgres_port" {
+  value = var.db_port
 }
 
 output "database_url" {
-  description = "Full PostgreSQL connection string (for migrate.sh and pg_tileserv)"
-  value       = "postgresql://${var.db_username}:${var.db_password}@${aws_db_instance.main.address}:${aws_db_instance.main.port}/${var.db_name}?sslmode=disable"
+  description = "Full PostgreSQL connection string"
+  value       = "postgresql://${var.db_username}:${var.db_password}@${azurerm_postgresql_flexible_server.main.fqdn}:${var.db_port}/${var.db_name}?sslmode=require"
   sensitive   = true
 }
 
-output "redis_endpoint" {
-  description = "ElastiCache Redis endpoint host"
-  value       = aws_elasticache_cluster.main.cache_nodes[0].address
+output "redis_hostname" {
+  description = "Azure Cache for Redis hostname"
+  value       = azurerm_redis_cache.main.hostname
 }
 
-output "redis_port" {
-  value = aws_elasticache_cluster.main.port
+output "redis_ssl_port" {
+  description = "Azure Cache for Redis SSL port"
+  value       = azurerm_redis_cache.main.ssl_port
 }
 
-output "s3_bucket_profile" {
-  value = aws_s3_bucket.profile.bucket
+output "storage_account_name" {
+  description = "Azure Storage Account name"
+  value       = azurerm_storage_account.main.name
 }
 
-output "s3_bucket_matches" {
-  value = aws_s3_bucket.matches.bucket
-}
-
-output "asg_name" {
-  value = aws_autoscaling_group.backend.name
-}
-
-output "admin_asg_name" {
-  value = aws_autoscaling_group.admin.name
-}
-
-output "tileserv_asg_name" {
-  value = aws_autoscaling_group.tileserv.name
-}
-
-output "rds_replica_endpoint" {
-  description = "RDS read replica endpoint (host only)"
-  value       = aws_db_instance.replica.address
-}
-
-output "rds_proxy_endpoint" {
-  description = "RDS Proxy endpoint used by pg_tileserv"
-  value       = aws_db_proxy.tileserv.endpoint
-}
-
-output "tileserv_database_url" {
-  description = "DATABASE_URL for pg_tileserv (via RDS Proxy)"
-  value       = "postgresql://${var.db_username}:${var.db_password}@${aws_db_proxy.tileserv.endpoint}:${var.db_port}/${var.db_name}?sslmode=require"
+output "storage_account_key" {
+  description = "Azure Storage Account primary access key"
+  value       = azurerm_storage_account.main.primary_access_key
   sensitive   = true
+}
+
+output "acr_login_server" {
+  description = "Azure Container Registry login server"
+  value       = azurerm_container_registry.main.login_server
+}
+
+output "key_vault_name" {
+  description = "Azure Key Vault name"
+  value       = azurerm_key_vault.main.name
+}
+
+output "vmss_backend_name" {
+  value = azurerm_linux_virtual_machine_scale_set.backend.name
+}
+
+output "vmss_admin_name" {
+  value = azurerm_linux_virtual_machine_scale_set.admin.name
+}
+
+output "vmss_tileserv_name" {
+  value = azurerm_linux_virtual_machine_scale_set.tileserv.name
 }

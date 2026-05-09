@@ -10,16 +10,16 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/smatch/badminton-backend/internal/domain"
-	"github.com/smatch/badminton-backend/platform/s3"
+	"github.com/smatch/badminton-backend/platform/blob"
 )
 
 type UploadService struct {
-	s3     *s3.Client
-	bucket string
+	blob    *blob.Client
+	container string
 }
 
-func NewUploadService(s3Client *s3.Client, bucket string) *UploadService {
-	return &UploadService{s3: s3Client, bucket: bucket}
+func NewUploadService(blobClient *blob.Client, container string) *UploadService {
+	return &UploadService{blob: blobClient, container: container}
 }
 
 var allowedExts = map[string]string{
@@ -38,10 +38,9 @@ func (s *UploadService) UploadDocument(ctx context.Context, file multipart.File,
 
 	key := fmt.Sprintf("%s/%s-%d%s", folder, uuid.New().String(), time.Now().Unix(), ext)
 
-	if err := s.s3.PutObjectEncrypted(ctx, s.bucket, key, file, contentType); err != nil {
+	if err := s.blob.PutObjectEncrypted(ctx, s.container, key, file, contentType); err != nil {
 		return "", &domain.AppError{Code: "UPLOAD_FAILED", Message: "Failed to upload document", Status: 500, Err: err}
 	}
 
-	// Return a presigned or public URL placeholder; adjust based on S3 setup
-	return fmt.Sprintf("https://%s.s3.amazonaws.com/%s", s.bucket, key), nil
+	return fmt.Sprintf("https://%s.blob.core.windows.net/%s/%s", s.blob.AccountName, s.container, key), nil
 }

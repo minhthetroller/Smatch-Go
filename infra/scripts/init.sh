@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # infra/scripts/init.sh
-# Full bootstrap for the smatch LocalStack environment.
+# Full bootstrap for the smatch Azure local development environment.
 # Run once from the repo root: bash infra/scripts/init.sh
 set -euo pipefail
 
@@ -14,9 +14,7 @@ log() { echo "[init] $*"; }
 ENV_FILE="${REPO_ROOT}/.env"
 if [[ -f "$ENV_FILE" ]]; then
   log "Loading $ENV_FILE..."
-  # Only export lines that are valid KEY=VALUE pairs (skip comments and blank lines)
   set -o allexport
-  # shellcheck disable=SC1090
   source <(grep -E '^[[:space:]]*[a-zA-Z_][a-zA-Z0-9_]*=' "$ENV_FILE")
   set +o allexport
 else
@@ -24,118 +22,73 @@ else
 fi
 
 # ── 2. Check required tools ──────────────────────────────────────────────────
-for cmd in docker tflocal awslocal jq psql; do
+for cmd in docker psql az; do
   if ! command -v "$cmd" &>/dev/null; then
     echo "ERROR: '$cmd' is not installed or not on PATH."
     exit 1
   fi
 done
 
-# ── 3. Require LOCALSTACK_AUTH_TOKEN ─────────────────────────────────────────
-if [[ -z "${LOCALSTACK_AUTH_TOKEN:-}" ]]; then
-  echo "ERROR: LOCALSTACK_AUTH_TOKEN is not set."
-  echo "       Add it to your .env file:  LOCALSTACK_AUTH_TOKEN=<your-token>"
-  exit 1
-fi
+# ── 3. Verify Azure login ────────────────────────────────────────────────────
+log "Verifying Azure CLI login..."
+az account show &>/dev/null || {
+  log "Not logged in. Running 'az login'..."
+  az login
+}
 
-# ── 3. Start LocalStack ───────────────────────────────────────────────────────
-log "Starting LocalStack..."
+# ── 4. Start local infrastructure (Docker Compose) ───────────────────────────
+log "Starting local infrastructure (Postgres, Redis, Azurite)..."
 cd "$REPO_ROOT"
-docker compose up -d localstack
+docker compose up -d postgres redis azurite
 
-log "Waiting for LocalStack to be ready..."
+log "Waiting for services to be healthy..."
 for i in $(seq 1 30); do
-  HEALTH=$(curl -sf http://localhost:4566/_localstack/health 2>/dev/null || true)
-  if echo "$HEALTH" | jq -e '(.status == "running") or (.services | to_entries | map(select(.value == "running" or .value == "available")) | length > 0)' &>/dev/null; then
-    log "LocalStack is ready."
+  PG_OK=$(docker compose exec -T postgres pg_isready -U postgres -d smatch 2>/dev/null || true)
+  if [[ "$PG_OK" == *"accepting connections"* ]]; then
+    log "Postgres is ready."
     break
   fi
   if [[ $i -eq 30 ]]; then
-    echo "ERROR: LocalStack did not become ready in time."
-    docker compose logs localstack
+    echo "ERROR: Postgres did not become ready in time."
+    docker compose logs postgres
     exit 1
   fi
-  log "  still waiting... ($i/30)"
-  sleep 5
+  sleep 2
 done
 
-# ── 4. Build the backend Docker image ─────────────────────────────────────────
-log "Building smatch-backend Docker image..."
-docker build -t smatch-backend:latest "$REPO_ROOT"
-
-# ── 5. Register image with LocalStack EC2 ─────────────────────────────────────
-# LocalStack Docker VM manager recognises images tagged as
-# localstack-ec2/<AmiName>:<AmiId>  — no register-image API call needed.
-AMI_ID="ami-smatch001"
-log "Tagging smatch-backend:latest as LocalStack AMI $AMI_ID..."
-docker tag smatch-backend:latest localstack-ec2/smatch-backend:${AMI_ID}
-log "Registered AMI: $AMI_ID"
-
-# ── 6. Terraform init + apply ──────────────────────────────────────────────────
-log "Running tflocal init..."
-cd "$INFRA_DIR"
-tflocal init -upgrade
-
-log "Running tflocal apply (this provisions RDS, ElastiCache, ALB, ASG)..."
-tflocal apply -auto-approve \
-  -var "ami_id=$AMI_ID" \
-  -var "zalopay_app_id=${ZALOPAY_APP_ID:-}" \
-  -var "zalopay_key1=${ZALOPAY_KEY1:-}" \
-  -var "zalopay_key2=${ZALOPAY_KEY2:-}" \
-  -var "zalopay_callback_url=${ZALOPAY_CALLBACK_URL:-}" \
-  -var "admin_secret=${ADMIN_SECRET:-}" \
-  -var "aws_endpoint=http://localstack:4566"
-
-# ── 7. Collect outputs ────────────────────────────────────────────────────────
-DATABASE_URL=$(tflocal output -raw database_url)
-ALB_DNS=$(tflocal output -raw alb_dns_name)
-# LocalStack assigns a random host port for ElastiCache — query it directly.
-REDIS_HOST=$(awslocal elasticache describe-cache-clusters --show-cache-node-info \
-  --query 'CacheClusters[0].CacheNodes[0].Endpoint.Address' --output text)
-REDIS_PORT=$(awslocal elasticache describe-cache-clusters --show-cache-node-info \
-  --query 'CacheClusters[0].CacheNodes[0].Endpoint.Port' --output text)
-
-log "RDS endpoint:      $(tflocal output -raw rds_endpoint):$(tflocal output -raw rds_port)"
-log "Redis endpoint:    $REDIS_HOST:$REDIS_PORT"
-log "ALB DNS:           $ALB_DNS"
-
-# ── 8. Run database migrations ────────────────────────────────────────────────
+# ── 5. Run database migrations ────────────────────────────────────────────────
 log "Running database migrations..."
-DATABASE_URL="$DATABASE_URL" bash "$SCRIPT_DIR/migrate.sh"
+DATABASE_URL="${DATABASE_URL:-postgresql://postgres:postgres@localhost:5432/smatch?sslmode=disable}" \
+  bash "$SCRIPT_DIR/migrate.sh"
 
-# ── 9. Start pg_tileserv with the resolved DATABASE_URL ──────────────────────
-# pg_tileserv runs inside Docker on the smatch network; it must reach RDS via
-# the LocalStack container name (smatch-localstack), not localhost.localstack.cloud
-# which resolves to 127.0.0.1 (the container's own loopback).
+# ── 6. Start pg_tileserv ──────────────────────────────────────────────────────
 log "Starting pg_tileserv..."
-cd "$REPO_ROOT"
-TILESERV_DATABASE_URL="${DATABASE_URL/localhost.localstack.cloud/smatch-localstack}" \
-  docker compose --profile tileserv up -d pg-tileserv
+docker compose up -d pg_tileserv
 
-# ── 10. Write .env.localstack with resolved values ────────────────────────────
-ENVFILE="$REPO_ROOT/.env.localstack"
+# ── 7. Write .env.azurite with resolved values ────────────────────────────────
+ENVFILE="$REPO_ROOT/.env.azurite"
 cat > "$ENVFILE" <<ENVEOF
 # Auto-generated by infra/scripts/init.sh — do not edit manually.
-# Use this to run the backend locally (outside of the ASG) against LocalStack.
+# Use this to run the backend locally against local Docker services + Azurite.
 
 PORT=3000
 NODE_ENV=development
 
-DATABASE_URL=$DATABASE_URL
+DATABASE_URL=postgresql://postgres:postgres@localhost:5432/smatch?sslmode=disable
 
-REDIS_HOST=$REDIS_HOST
-REDIS_PORT=$REDIS_PORT
+REDIS_HOST=localhost
+REDIS_PORT=6379
 REDIS_PASSWORD=
 REDIS_TLS_ENABLED=false
 
 FIREBASE_CREDENTIALS_FILE=smatch-badminton-firebase-adminsdk-fbsvc-fb65abab30.json
 
-AWS_REGION=${AWS_REGION:-ap-southeast-1}
-AWS_ACCESS_KEY_ID=test
-AWS_SECRET_ACCESS_KEY=test
-AWS_ENDPOINT=http://localhost:4566
-AWS_S3_BUCKET_PROFILE=smatch-profiles
-AWS_S3_BUCKET_MATCHES=smatch-matches
+AZURE_STORAGE_ACCOUNT=devstoreaccount1
+AZURE_STORAGE_KEY=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==
+AZURE_BLOB_ENDPOINT=http://localhost:10000/devstoreaccount1
+AZURE_STORAGE_CONTAINER_PROFILE=smatch-profiles
+AZURE_STORAGE_CONTAINER_MATCHES=smatch-matches
+AZURE_STORAGE_CONTAINER_BUSINESS_DOCS=smatch-business-docs
 
 TILE_SERVER_URL=http://localhost:7800
 
@@ -148,13 +101,18 @@ ZALOPAY_CALLBACK_URL=${ZALOPAY_CALLBACK_URL:-}
 SLOT_LOCK_TTL_SECONDS=600
 ADMIN_SECRET=${ADMIN_SECRET:-}
 ENVEOF
-log ".env.localstack written."
+log ".env.azurite written."
 
+# ── 8. Terraform init (for cloud deployment, not local) ───────────────────────
+log ""
+log "For cloud deployment, run:"
+log "  cd $INFRA_DIR"
+log "  terraform init"
+log "  terraform plan -out tfplan.out"
+log "  terraform apply tfplan.out"
 log ""
 log "=== Bootstrap complete ==="
-log "API (via ALB):  http://$ALB_DNS/health"
-log "Tile server:    http://localhost:7800"
-log "LocalStack:     http://localhost:4566/_localstack/health"
 log ""
-log "To run the backend locally against LocalStack:"
-log "  cp .env.localstack .env && go run ./cmd/server"
+log "Azurite (Blob):  http://localhost:10000"
+log "To run the backend locally:"
+log "  cp .env.azurite .env && go run ./cmd/server"

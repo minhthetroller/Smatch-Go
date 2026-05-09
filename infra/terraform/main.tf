@@ -2,23 +2,37 @@ terraform {
   required_version = ">= 1.6"
 
   required_providers {
-    aws = {
-      source  = "hashicorp/aws"
-      version = "~> 5.0"
+    azurerm = {
+      source  = "hashicorp/azurerm"
+      version = "~> 4.0"
+    }
+    random = {
+      source  = "hashicorp/random"
+      version = "~> 3.0"
     }
   }
 }
 
-# tflocal automatically overrides all provider endpoints to http://localhost:4566.
-# No manual endpoint_url blocks needed.
-provider "aws" {
-  region  = var.aws_region
-  profile = var.aws_profile # uses ~/.aws/credentials
+provider "azurerm" {
+  features {}
+}
 
-  default_tags {
-    tags = {
-      Project = "smatch"
-      Env     = var.environment
-    }
+resource "random_id" "suffix" {
+  byte_length = 4
+}
+
+locals {
+  api_fqdn = var.domain_name != "" ? (
+    var.api_subdomain != "" ? "${var.api_subdomain}.${var.domain_name}" : var.domain_name
+  ) : ""
+}
+
+resource "azurerm_resource_group" "main" {
+  name     = "${var.app_name}-rg-${var.environment}"
+  location = var.azure_region
+
+  tags = {
+    Project = "smatch"
+    Env     = var.environment
   }
 }

@@ -82,3 +82,10 @@ type CourtStats struct {
 	OccupancyRate       float64
 	CancellationRate    float64
 }
+
+type CourtStatsDaily struct {
+	Date          time.Time
+	Bookings      int64
+	Revenue       int64
+	Cancellations int64
+}

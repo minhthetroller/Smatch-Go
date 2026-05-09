@@ -45,7 +45,7 @@ type ReviewBusinessProfileRequest struct {
 	AdminNotes  string `json:"adminNotes" validate:"required"`
 }
 
-// UploadDocumentResponse sent after S3 upload
+// UploadDocumentResponse sent after Blob Storage upload
 type UploadDocumentResponse struct {
 	URL      string `json:"url"`
 	Filename string `json:"filename"`

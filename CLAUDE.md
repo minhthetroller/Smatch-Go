@@ -1,6 +1,6 @@
 # smatch-backend-go
 
-Badminton court booking platform backend. Go 1.23, chi router, PostgreSQL (pgx/v5), Redis, Firebase Auth, ZaloPay, AWS S3, pg_tileserv for geospatial tile serving.
+Badminton court booking platform backend. Go 1.23, chi router, PostgreSQL (pgx/v5), Redis, Firebase Auth, ZaloPay, Azure Blob Storage, pg_tileserv for geospatial tile serving.
 
 ## Architecture
 
@@ -23,10 +23,10 @@ platform/
   firebase/        # Admin SDK init
   postgres/        # pgx pool init
   redis/           # go-redis client init
-  s3/              # AWS SDK v2 S3 client init
+  blob/             # Azure Blob Storage client init
   zalopay/         # ZaloPay HTTP client
 infra/
-  terraform/       # AWS infra (ALB, ASG, RDS, ElastiCache, S3, VPC)
+  terraform/       # Azure infra (LB, VMSS, PostgreSQL, Redis, Storage, VNet)
   scripts/         # init.sh, migrate.sh
 migrations/        # golang-migrate SQL files (up/down pairs)
 nginx/             # nginx.dev.conf reverse proxy
@@ -64,9 +64,9 @@ Copy `.env.example` → `.env`. Key vars:
 | `REDIS_TLS_ENABLED` | `false` | Set `true` in prod |
 | `FIREBASE_CREDENTIALS_FILE` | `smatch-badminton-firebase-adminsdk-fbsvc-fb65abab30.json` | Path to service account JSON |
 | `ZALOPAY_APP_ID/KEY1/KEY2` | — | ZaloPay sandbox/prod creds |
-| `AWS_REGION/ACCESS_KEY_ID/SECRET_ACCESS_KEY` | — | S3 access |
-| `AWS_ENDPOINT` | — | Set to LocalStack URL for local S3 |
-| `AWS_S3_BUCKET_PROFILE/MATCHES` | `smatch-profiles/smatch-matches` | |
+| `AZURE_STORAGE_ACCOUNT/KEY` | — | Blob Storage access |
+| `AZURE_BLOB_ENDPOINT` | — | Set to Azurite URL for local blob |
+| `AZURE_STORAGE_CONTAINER_PROFILE/MATCHES/BUSINESS_DOCS` | `smatch-profiles/smatch-matches/smatch-business-docs` | |
 | `ADMIN_SECRET` | — | Bearer token for admin API |
 | `SLOT_LOCK_TTL_SECONDS` | `600` | Redis slot lock duration |
 | `TILE_SERVER_URL` | `http://localhost:7800` | pg_tileserv URL |
@@ -90,15 +90,15 @@ Copy `.env.example` → `.env`. Key vars:
 
 ## Infrastructure (Terraform)
 
-Located in `infra/terraform/`. AWS target: ap-southeast-1.
+Located in `infra/terraform/`. Azure target: southeastasia.
 
-Key resources: VPC with public/private/data subnets, ALB, ASG (EC2 launch templates), RDS PostgreSQL + read replica, ElastiCache Redis, S3 buckets, pg_tileserv on its own ASG.
+Key resources: VNet with public/private app/private data subnets, Load Balancer, VM Scale Sets (3: backend, admin, tileserv), Azure Database for PostgreSQL Flexible Server, Azure Cache for Redis, Blob Storage containers, Azure Container Registry, Key Vault.
 
 ```bash
 cd infra/terraform
 terraform init
-terraform plan -var-file=terraform.tfvars
-terraform apply -var-file=terraform.tfvars
+terraform plan -out tfplan.out
+terraform apply tfplan.out
 ```
 
 Do not commit `terraform.tfstate`, `terraform.tfvars`, or `tfplan.out` — they may contain secrets.

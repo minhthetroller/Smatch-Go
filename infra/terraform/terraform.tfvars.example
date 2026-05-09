@@ -1,64 +1,40 @@
-# ── terraform.tfvars.example ──────────────────────────────────────────────────
-# Copy to terraform.tfvars and fill in your values for real AWS deployment.
-# DO NOT commit terraform.tfvars to version control.
+# ── General ───────────────────────────────────────────────────────────────────
+app_name    = "smatch"
+environment = "staging"
+azure_region = "southeastasia"
 
-# ── AWS ──────────────────────────────────────────────────────────────────────
-aws_region  = "ap-southeast-1"
-aws_profile = "default"        # AWS CLI profile from ~/.aws/credentials
-environment = "staging"        # staging | production
+# ── Networking ────────────────────────────────────────────────────────────────
+# Override defaults if needed
 
-# Leave empty for real AWS (LocalStack sets this to "http://localstack:4566")
-aws_endpoint = ""
+# ── Compute / VMSS ────────────────────────────────────────────────────────────
+vmss_instance_type = "Standard_B2s"
+vmss_admin_username = "smatch"
+# vmss_ssh_public_key = "ssh-rsa AAAA..."  # required — set in terraform.tfvars
 
-# ── Networking ───────────────────────────────────────────────────────────────
-# Three subnet tiers — all lists must match the number of availability_zones.
-#   public             → ALB (internet-facing)
-#   private_app        → ASG / EC2 instances (egress via NAT)
-#   private (data)     → RDS + ElastiCache (no internet access)
-availability_zones       = ["ap-southeast-1a", "ap-southeast-1b"]
-public_subnet_cidrs      = ["10.0.1.0/24", "10.0.2.0/24"]
-private_app_subnet_cidrs = ["10.0.3.0/24", "10.0.4.0/24"]
-private_subnet_cidrs     = ["10.0.5.0/24", "10.0.6.0/24"]
+backend_asg_desired_capacity = 2
 
-# ── EC2 / ASG ────────────────────────────────────────────────────────────────
-# Use Amazon Linux 2023 AMI for your region:
-#   aws ec2 describe-images --owners amazon \
-#     --filters "Name=name,Values=al2023-ami-2023*-x86_64" \
-#     --query 'Images | sort_by(@, &CreationDate) | [-1].ImageId' --output text
-ami_id        = "ami-0abcdef1234567890"
-instance_type = "t3.small"
+# ── Database ──────────────────────────────────────────────────────────────────
+db_username = "psqladmin"
+# db_password = ""  # required — set in terraform.tfvars
 
-asg_min_size         = 1
-asg_max_size         = 3
-asg_desired_capacity = 2
+# ── Redis ─────────────────────────────────────────────────────────────────────
+redis_sku      = "Basic"
+redis_capacity = 0
 
-# ── ECR ──────────────────────────────────────────────────────────────────────
-# Create ECR repo first, then push your Docker image:
-#   aws ecr create-repository --repository-name smatch-backend
-#   ECR_URL=$(aws ecr describe-repositories --repository-names smatch-backend \
-#     --query 'repositories[0].repositoryUri' --output text)
-ecr_repo_url = "123456789012.dkr.ecr.ap-southeast-1.amazonaws.com/smatch-backend"
+# ── Storage ───────────────────────────────────────────────────────────────────
 
-# ── Database ─────────────────────────────────────────────────────────────────
-db_name     = "smatch"
-db_username = "postgres"
-db_password = "CHANGE_ME_strong_password_here"  # minimum 12 characters
+# ── Container Registry ────────────────────────────────────────────────────────
+# acr_name = "smatchregistry"  # globally unique, alphanumeric only
 
-# ── Firebase ─────────────────────────────────────────────────────────────────
-firebase_credentials_file = "/app/smatch-badminton-firebase-adminsdk-fbsvc-fb65abab30.json"
+# ── DNS / TLS ─────────────────────────────────────────────────────────────────
+# domain_name   = "example.com"
+# api_subdomain = "api"
+# create_dns    = false
 
-# ── ZaloPay ──────────────────────────────────────────────────────────────────
-zalopay_app_id       = "2554"
-zalopay_key1         = ""
-zalopay_key2         = ""
-zalopay_endpoint     = "https://sb-openapi.zalopay.vn"  # sandbox
-zalopay_callback_url = "https://your-domain.com/api/payments/callback"
-
-# ── Tile Server ──────────────────────────────────────────────────────────────
-# If running pg_tileserv on a separate EC2/ECS, use its private IP/DNS
-tile_server_url = "http://localhost:7800"
-
-# ── Admin ────────────────────────────────────────────────────────────────────
-admin_secret   = ""
-redis_password = ""  # Set a strong password for ElastiCache AUTH in production
-
+# ── Application Config ────────────────────────────────────────────────────────
+# zalopay_app_id   = ""
+# zalopay_key1     = ""
+# zalopay_key2     = ""
+# zalopay_endpoint = "https://sb-openapi.zalopay.vn"
+# zalopay_callback_url = ""
+# admin_secret     = ""

@@ -36,14 +36,13 @@ type Config struct {
 	// downloaded from the Firebase console.
 	FirebaseCredentialsFile string
 
-	AWS struct {
-		Region          string
-		AccessKeyID     string
-		SecretAccessKey string
-		Endpoint        string // optional: LocalStack override
-		BucketProfile   string
-		BucketMatches   string
-		BucketBusinessDocs string
+	Blob struct {
+		AccountName          string
+		AccountKey           string
+		Endpoint             string // optional: Azurite override
+		ContainerProfile     string
+		ContainerMatches     string
+		ContainerBusinessDocs string
 	}
 
 	AdminSecret   string
@@ -80,13 +79,12 @@ func Load() *Config {
 
 	cfg.FirebaseCredentialsFile = getEnv("FIREBASE_CREDENTIALS_FILE", "smatch-badminton-firebase-adminsdk-fbsvc-fb65abab30.json")
 
-	cfg.AWS.Region = getEnv("AWS_REGION", "us-east-1")
-	cfg.AWS.AccessKeyID = getEnv("AWS_ACCESS_KEY_ID", "test")
-	cfg.AWS.SecretAccessKey = getEnv("AWS_SECRET_ACCESS_KEY", "test")
-	cfg.AWS.Endpoint = getEnv("AWS_ENDPOINT", "")
-	cfg.AWS.BucketProfile = getEnv("AWS_S3_BUCKET_PROFILE", "smatch-profiles")
-	cfg.AWS.BucketMatches = getEnv("AWS_S3_BUCKET_MATCHES", "smatch-matches")
-	cfg.AWS.BucketBusinessDocs = getEnv("AWS_S3_BUCKET_BUSINESS_DOCS", "smatch-business-docs")
+	cfg.Blob.AccountName = getEnv("AZURE_STORAGE_ACCOUNT", "")
+	cfg.Blob.AccountKey = getEnv("AZURE_STORAGE_KEY", "")
+	cfg.Blob.Endpoint = getEnv("AZURE_BLOB_ENDPOINT", "")
+	cfg.Blob.ContainerProfile = getEnv("AZURE_STORAGE_CONTAINER_PROFILE", "smatch-profiles")
+	cfg.Blob.ContainerMatches = getEnv("AZURE_STORAGE_CONTAINER_MATCHES", "smatch-matches")
+	cfg.Blob.ContainerBusinessDocs = getEnv("AZURE_STORAGE_CONTAINER_BUSINESS_DOCS", "smatch-business-docs")
 
 	cfg.AdminSecret = getEnv("ADMIN_SECRET", "")
 	cfg.AdminPort = getEnvInt("ADMIN_PORT", 3001)

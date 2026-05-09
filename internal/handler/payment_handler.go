@@ -57,8 +57,6 @@ func NewPaymentHandler(
 
 // POST /api/payments/create
 func (h *PaymentHandler) CreatePayment(w http.ResponseWriter, r *http.Request) {
-	_ = middleware.UserFromContext(r.Context()) // auth enforced by middleware; user context not needed here
-
 	var req dto.CreatePaymentRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		sendError(w, "Invalid request body", "BAD_REQUEST", 400)
