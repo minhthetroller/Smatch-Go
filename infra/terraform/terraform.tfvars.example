@@ -17,9 +17,8 @@ backend_asg_desired_capacity = 2
 db_username = "psqladmin"
 # db_password = ""  # required — set in terraform.tfvars
 
-# ── Redis ─────────────────────────────────────────────────────────────────────
-redis_sku      = "Basic"
-redis_capacity = 0
+# ── Redis (Azure Managed Redis) ───────────────────────────────────────────────
+managed_redis_sku = "Balanced_B0"
 
 # ── Storage ───────────────────────────────────────────────────────────────────
 
@@ -27,9 +26,10 @@ redis_capacity = 0
 # acr_name = "smatchregistry"  # globally unique, alphanumeric only
 
 # ── DNS / TLS ─────────────────────────────────────────────────────────────────
-# domain_name   = "example.com"
-# api_subdomain = "api"
-# create_dns    = false
+# domain_name       = "example.com"
+# api_subdomain     = "api"
+# create_dns        = false
+# letsencrypt_email = "admin@example.com"  # required for automatic cert issuance
 
 # ── Application Config ────────────────────────────────────────────────────────
 # zalopay_app_id   = ""

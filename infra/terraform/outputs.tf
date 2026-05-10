@@ -24,13 +24,13 @@ output "database_url" {
 }
 
 output "redis_hostname" {
-  description = "Azure Cache for Redis hostname"
-  value       = azurerm_redis_cache.main.hostname
+  description = "Azure Managed Redis hostname"
+  value       = azurerm_managed_redis.main.hostname
 }
 
-output "redis_ssl_port" {
-  description = "Azure Cache for Redis SSL port"
-  value       = azurerm_redis_cache.main.ssl_port
+output "redis_port" {
+  description = "Azure Managed Redis port"
+  value       = azurerm_managed_redis.main.default_database[0].port
 }
 
 output "storage_account_name" {

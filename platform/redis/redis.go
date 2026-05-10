@@ -2,6 +2,7 @@ package redis
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 
 	goredis "github.com/redis/go-redis/v9"
@@ -20,6 +21,9 @@ func NewClient(ctx context.Context, cfg Config) (*goredis.Client, error) {
 	opts := &goredis.Options{
 		Addr:     fmt.Sprintf("%s:%d", cfg.Host, cfg.Port),
 		Password: cfg.Password,
+	}
+	if cfg.TLSEnabled {
+		opts.TLSConfig = &tls.Config{ServerName: cfg.Host}
 	}
 
 	client := goredis.NewClient(opts)

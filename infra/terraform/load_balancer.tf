@@ -42,10 +42,10 @@ resource "azurerm_lb_backend_address_pool" "tileserv" {
 # ── Health Probes ─────────────────────────────────────────────────────────────
 
 resource "azurerm_lb_probe" "backend" {
-  name            = "${var.app_name}-probe-backend"
-  loadbalancer_id = azurerm_lb.main.id
-  port            = var.backend_port
-  protocol        = "Tcp"
+  name                = "${var.app_name}-probe-backend"
+  loadbalancer_id     = azurerm_lb.main.id
+  protocol            = "Tcp"
+  port                = var.backend_port
   interval_in_seconds = 15
   number_of_probes    = 2
 }
@@ -60,10 +60,10 @@ resource "azurerm_lb_probe" "backend_https" {
 }
 
 resource "azurerm_lb_probe" "admin" {
-  name            = "${var.app_name}-probe-admin"
-  loadbalancer_id = azurerm_lb.main.id
-  port            = var.backend_port
-  protocol        = "Tcp"
+  name                = "${var.app_name}-probe-admin"
+  loadbalancer_id     = azurerm_lb.main.id
+  protocol            = "Tcp"
+  port                = var.backend_port
   interval_in_seconds = 15
   number_of_probes    = 2
 }

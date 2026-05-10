@@ -57,9 +57,9 @@ resource "azurerm_linux_virtual_machine_scale_set" "backend" {
   custom_data = base64encode(templatefile("${path.module}/cloud_init_backend.tpl", {
     backend_port                 = var.backend_port
     database_url                 = "postgresql://${var.db_username}:${var.db_password}@${azurerm_postgresql_flexible_server.main.fqdn}:${var.db_port}/${var.db_name}?sslmode=require"
-    redis_host                   = azurerm_redis_cache.main.hostname
-    redis_port                   = azurerm_redis_cache.main.ssl_port
-    redis_password               = azurerm_redis_cache.main.primary_access_key
+    redis_host                   = azurerm_managed_redis.main.hostname
+    redis_port                   = azurerm_managed_redis.main.default_database[0].port
+    redis_password               = azurerm_managed_redis.main.default_database[0].primary_access_key
     storage_account_name         = azurerm_storage_account.main.name
     storage_account_key          = azurerm_storage_account.main.primary_access_key
     storage_container_profile    = var.storage_container_profile
@@ -78,6 +78,7 @@ resource "azurerm_linux_virtual_machine_scale_set" "backend" {
     tile_server_url              = var.tile_server_url
     admin_secret                 = var.admin_secret
     rate_limit_trusted_ips       = var.rate_limit_trusted_ips
+    letsencrypt_email            = var.letsencrypt_email
   }))
 
   automatic_instance_repair {

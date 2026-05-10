@@ -116,22 +116,10 @@ variable "db_port" {
 
 # ── Redis ─────────────────────────────────────────────────────────────────────
 
-variable "redis_sku" {
-  description = "Azure Cache for Redis SKU (Basic | Standard | Premium)"
+variable "managed_redis_sku" {
+  description = "Azure Managed Redis SKU (Balanced_B0 | Balanced_B1 | MemoryOptimized_M10 | ComputeOptimized_X10)"
   type        = string
-  default     = "Basic"
-}
-
-variable "redis_family" {
-  description = "Azure Cache for Redis family (C = Basic/Standard, P = Premium)"
-  type        = string
-  default     = "C"
-}
-
-variable "redis_capacity" {
-  description = "Azure Cache for Redis capacity (0-6 depending on SKU)"
-  type        = number
-  default     = 0
+  default     = "Balanced_B0"
 }
 
 # ── Storage (Blob) ────────────────────────────────────────────────────────────
@@ -172,6 +160,12 @@ variable "create_dns" {
   description = "Set to true to create DNS records and TLS certificates"
   type        = bool
   default     = false
+}
+
+variable "letsencrypt_email" {
+  description = "Email for Let's Encrypt registration and renewal notices. Leave empty to skip email registration."
+  type        = string
+  default     = ""
 }
 
 # ── Application config (injected via cloud-init) ──────────────────────────────

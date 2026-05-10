@@ -57,7 +57,7 @@ resource "azurerm_key_vault_secret" "storage_key" {
 
 resource "azurerm_key_vault_secret" "redis_key" {
   name         = "redis-key"
-  value        = azurerm_redis_cache.main.primary_access_key
+  value        = azurerm_managed_redis.main.default_database[0].primary_access_key
   key_vault_id = azurerm_key_vault.main.id
 
   depends_on = [azurerm_key_vault_access_policy.terraform]
