@@ -136,8 +136,11 @@ func main() {
 	proxyH := handler.NewProxyHandler(cfg.TileServerURL, cfg.TileLayerID)
 	wsH := handler.NewWebSocketHandler(hub)
 
-	// S3 available for future image upload use
-	_ = s3Client
+	var uploadSvc *service.UploadService
+	if s3Client != nil {
+		uploadSvc = service.NewUploadService(s3Client, cfg.AWS.BucketMatches)
+	}
+	uploadH := handler.NewUploadHandler(uploadSvc)
 
 	// ── Wire payment auto-cancel on WS disconnect ────────────────────────────
 	hub.OnPaymentDisconnect = func(paymentID string) {
@@ -217,7 +220,7 @@ func main() {
 
 		// ── Payments ──────────────────────────────────────────────────────
 		r.Route("/payments", func(r chi.Router) {
-			r.With(authMw.RequireRegisteredUser).Post("/create", paymentH.CreatePayment)
+			r.With(authMw.RequireAuth).Post("/create", paymentH.CreatePayment)
 			r.With(httprate.LimitByIP(10, time.Minute)).Post("/callback", paymentH.Callback)
 			r.With(authMw.RequireAuth).Get("/{id}", paymentH.GetPayment)
 			r.With(authMw.RequireAuth).Get("/{id}/status", paymentH.GetPaymentStatus)
@@ -246,6 +249,11 @@ func main() {
 			r.Get("/autocomplete", searchH.Autocomplete)
 			r.Get("/courts", searchH.SearchCourts)
 			r.Get("/popular", searchH.Popular)
+		})
+
+		// ── Uploads ───────────────────────────────────────────────────────
+		r.Route("/uploads", func(r chi.Router) {
+			r.With(authMw.RequireRegisteredUser).Post("/match-image", uploadH.UploadMatchImage)
 		})
 
 		// ── Admin ─────────────────────────────────────────────────────────
