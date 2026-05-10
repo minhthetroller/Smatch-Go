@@ -105,18 +105,37 @@ write_files:
       nginx -t
       systemctl enable --now nginx
 
-      # Obtain Let's Encrypt cert via HTTP-01 webroot (LB rule: 80 -> 3000 -> nginx)
-      # Non-fatal: LE rate limits should not block docker container startup
-      if [ -n "$DOMAIN" ]; then
-        if [ -n "$EMAIL" ]; then
-          retry certbot certonly --webroot -w /var/www/certbot \
-            -d "$DOMAIN" --non-interactive --agree-tos -m "$EMAIL" --keep-until-expiring || true
+      # Obtain trusted cert via HTTP-01 webroot. Try Let's Encrypt first;
+      # fall back to ZeroSSL if LE rate limits are hit (common during active dev/reimaging).
+      # Non-fatal: cert failure must not block docker container startup.
+      obtain_cert() {
+        local domain="$1" email="$2"
+        # --- Let's Encrypt ---
+        if [ -n "$email" ]; then
+          certbot certonly --webroot -w /var/www/certbot \
+            -d "$domain" --non-interactive --agree-tos -m "$email" \
+            --keep-until-expiring && return 0
         else
-          retry certbot certonly --webroot -w /var/www/certbot \
-            -d "$DOMAIN" --non-interactive --agree-tos \
-            --register-unsafely-without-email --keep-until-expiring || true
+          certbot certonly --webroot -w /var/www/certbot \
+            -d "$domain" --non-interactive --agree-tos \
+            --register-unsafely-without-email --keep-until-expiring && return 0
         fi
-        # Only promote cert if LE issued one; otherwise nginx keeps the self-signed bootstrap cert
+        # --- ZeroSSL fallback (LE rate-limited) ---
+        local eab_resp eab_kid eab_key reg_email
+        reg_email="${email:-admin@example.com}"
+        eab_resp=$(curl -sf -X POST 'https://api.zerossl.com/acme/eab-credentials-email' \
+          -d "email=$reg_email") || return 1
+        eab_kid=$(echo "$eab_resp" | python3 -c 'import sys,json; print(json.load(sys.stdin)["eab_kid"])')
+        eab_key=$(echo "$eab_resp" | python3 -c 'import sys,json; print(json.load(sys.stdin)["eab_hmac_key"])')
+        certbot certonly --webroot -w /var/www/certbot \
+          -d "$domain" --non-interactive --agree-tos -m "$reg_email" \
+          --server https://acme.zerossl.com/v2/DV90 \
+          --eab-kid "$eab_kid" --eab-hmac-key "$eab_key" \
+          --keep-until-expiring
+      }
+
+      if [ -n "$DOMAIN" ]; then
+        retry obtain_cert "$DOMAIN" "$EMAIL" || true
         if [ -f "/etc/letsencrypt/live/$DOMAIN/fullchain.pem" ]; then
           cp /etc/letsencrypt/live/$DOMAIN/fullchain.pem /etc/nginx/ssl/fullchain.pem
           cp /etc/letsencrypt/live/$DOMAIN/privkey.pem   /etc/nginx/ssl/privkey.pem
