@@ -88,6 +88,11 @@ func main() {
 	if err != nil {
 		logger.Warn("s3 unavailable", zap.Error(err))
 	}
+	if s3Client != nil {
+		if err := s3Client.EnsureBuckets(ctx, cfg.AWS.BucketProfile, cfg.AWS.BucketMatches, cfg.AWS.BucketBusinessDocs); err != nil {
+			logger.Warn("s3 bucket init failed", zap.Error(err))
+		}
+	}
 
 	// Repositories
 	userRepo := repository.NewUserRepository(pool)

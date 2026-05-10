@@ -21,7 +21,7 @@ log "Running migrations from $MIGRATIONS_DIR..."
 
 for sql_file in $(ls "$MIGRATIONS_DIR"/*.up.sql | sort); do
   log "Applying: $(basename "$sql_file")..."
-  psql "$DATABASE_URL" -f "$sql_file"
+  psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f "$sql_file"
   log "Done: $(basename "$sql_file")"
 done
 

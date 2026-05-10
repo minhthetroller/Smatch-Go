@@ -2,6 +2,7 @@ package s3
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 
@@ -25,10 +26,11 @@ type Config struct {
 
 // Client wraps the AWS S3 client.
 type Client struct {
-	s3                  *s3.Client
-	BucketProfile       string
-	BucketMatches       string
-	BucketBusinessDocs  string
+	s3                 *s3.Client
+	region             string
+	BucketProfile      string
+	BucketMatches      string
+	BucketBusinessDocs string
 }
 
 // New creates an S3 client.
@@ -54,10 +56,36 @@ func New(ctx context.Context, cfg Config) (*Client, error) {
 
 	return &Client{
 		s3:                 s3.NewFromConfig(awsCfg, s3Opts...),
+		region:             cfg.Region,
 		BucketProfile:      cfg.BucketProfile,
 		BucketMatches:      cfg.BucketMatches,
 		BucketBusinessDocs: cfg.BucketBusinessDocs,
 	}, nil
+}
+
+// EnsureBuckets creates buckets that don't yet exist. Idempotent — safe to call on startup.
+func (c *Client) EnsureBuckets(ctx context.Context, buckets ...string) error {
+	for _, bucket := range buckets {
+		if bucket == "" {
+			continue
+		}
+		input := &s3.CreateBucketInput{Bucket: aws.String(bucket)}
+		if c.region != "" && c.region != "us-east-1" {
+			input.CreateBucketConfiguration = &types.CreateBucketConfiguration{
+				LocationConstraint: types.BucketLocationConstraint(c.region),
+			}
+		}
+		_, err := c.s3.CreateBucket(ctx, input)
+		if err != nil {
+			var alreadyOwned *types.BucketAlreadyOwnedByYou
+			var alreadyExists *types.BucketAlreadyExists
+			if errors.As(err, &alreadyOwned) || errors.As(err, &alreadyExists) {
+				continue
+			}
+			return fmt.Errorf("s3: create bucket %q: %w", bucket, err)
+		}
+	}
+	return nil
 }
 
 // PutObject uploads an object to S3.
