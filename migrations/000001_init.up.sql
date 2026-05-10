@@ -184,26 +184,26 @@ CREATE INDEX IF NOT EXISTS "idx_payments_type"            ON "payments"("payment
 
 -- ==================== MATCHES ====================
 
-CREATE TYPE IF NOT EXISTS skill_level AS ENUM (
+DO $$ BEGIN CREATE TYPE skill_level AS ENUM (
     'TBY','Y','Y_PLUS','Y_PLUS_PLUS','TBK','TB','TB_PLUS','TB_PLUS_PLUS','K','K_PLUS','GIOI'
-);
+); EXCEPTION WHEN duplicate_object THEN null; END $$;
 
-CREATE TYPE IF NOT EXISTS shuttle_type AS ENUM (
+DO $$ BEGIN CREATE TYPE shuttle_type AS ENUM (
     'TC77','BASAO','YONEX_AS30','YONEX_AS40','YONEX_AS50',
     'VICTOR_MASTER_1','VICTOR_CHAMPION_1','RSL_CLASSIC','LINDAN_40','LINDAN_50','OTHER'
-);
+); EXCEPTION WHEN duplicate_object THEN null; END $$;
 
-CREATE TYPE IF NOT EXISTS player_format AS ENUM (
+DO $$ BEGIN CREATE TYPE player_format AS ENUM (
     'SINGLE_MALE','SINGLE_FEMALE','DOUBLE_MALE','DOUBLE_FEMALE','MIXED_DOUBLE','ANY'
-);
+); EXCEPTION WHEN duplicate_object THEN null; END $$;
 
-CREATE TYPE IF NOT EXISTS match_status AS ENUM (
+DO $$ BEGIN CREATE TYPE match_status AS ENUM (
     'OPEN','FULL','IN_PROGRESS','COMPLETED','CANCELLED'
-);
+); EXCEPTION WHEN duplicate_object THEN null; END $$;
 
-CREATE TYPE IF NOT EXISTS match_player_status AS ENUM (
+DO $$ BEGIN CREATE TYPE match_player_status AS ENUM (
     'PENDING','PENDING_PAYMENT','ACCEPTED','REJECTED','LEFT','EXPIRED'
-);
+); EXCEPTION WHEN duplicate_object THEN null; END $$;
 
 CREATE TABLE IF NOT EXISTS "matches" (
     "id"            UUID              NOT NULL DEFAULT uuid_generate_v4(),
