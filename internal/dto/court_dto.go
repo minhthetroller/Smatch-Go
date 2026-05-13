@@ -16,7 +16,8 @@ type CourtResponse struct {
 	OpeningHours json.RawMessage `json:"openingHours"`
 	Lat          *float64        `json:"lat"`
 	Lng          *float64        `json:"lng"`
-	Distance     *float64        `json:"distance,omitempty"`
+	Distance   *float64 `json:"distance,omitempty"`
+	DistanceKm *float64 `json:"distanceKm,omitempty"`
 	CreatedAt    string          `json:"createdAt"`
 	UpdatedAt    string          `json:"updatedAt"`
 }
