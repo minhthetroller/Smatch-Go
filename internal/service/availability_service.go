@@ -355,7 +355,7 @@ func addMinutes(t string, mins int) string {
 
 func parseTime(t string) (int, int) {
 	var h, m int
-	fmt.Sscanf(t, "%d:%d", &h, &m)
+	_, _ = fmt.Sscanf(t, "%d:%d", &h, &m)
 	return h, m
 }
 

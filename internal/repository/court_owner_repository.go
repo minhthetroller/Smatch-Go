@@ -146,7 +146,7 @@ func (r *CourtOwnerRepository) CreateCourtFromSpecs(ctx context.Context, ownerID
 	if err != nil {
 		return "", err
 	}
-	defer tx.Rollback(ctx)
+	defer tx.Rollback(ctx) //nolint:errcheck
 
 	openingHours, _ := json.Marshal(specs.OperatingHours)
 

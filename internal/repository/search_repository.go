@@ -65,11 +65,6 @@ func (r *SearchRepository) GetAllCourtNames(ctx context.Context) ([]struct{ ID, 
 	}
 	defer rows.Close()
 
-	type CourtName struct {
-		ID       string
-		Name     string
-		District string
-	}
 	var result []struct{ ID, Name, District string }
 	for rows.Next() {
 		var cn struct{ ID, Name, District string }
