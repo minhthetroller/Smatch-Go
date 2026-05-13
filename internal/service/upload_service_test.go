@@ -12,7 +12,7 @@ import (
 
 type fakeFile struct{ *bytes.Reader }
 
-func (f *fakeFile) Close() error                             { return nil }
+func (f *fakeFile) Close() error                            { return nil }
 func (f *fakeFile) ReadAt(p []byte, off int64) (int, error) { return f.Reader.ReadAt(p, off) }
 
 func newFakeFile(data string) multipart.File {

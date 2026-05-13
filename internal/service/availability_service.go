@@ -26,8 +26,8 @@ type OpeningHours struct {
 var dayNames = []string{"sun", "mon", "tue", "wed", "thu", "fri", "sat"}
 
 type AvailabilityService struct {
-	availRepo  *repository.AvailabilityRepository
-	courtRepo  *repository.CourtRepository
+	availRepo *repository.AvailabilityRepository
+	courtRepo *repository.CourtRepository
 }
 
 func NewAvailabilityService(ar *repository.AvailabilityRepository, cr *repository.CourtRepository) *AvailabilityService {
@@ -355,7 +355,7 @@ func addMinutes(t string, mins int) string {
 
 func parseTime(t string) (int, int) {
 	var h, m int
-	fmt.Sscanf(t, "%d:%d", &h, &m)
+	_, _ = fmt.Sscanf(t, "%d:%d", &h, &m)
 	return h, m
 }
 

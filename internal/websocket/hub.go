@@ -44,12 +44,12 @@ type MatchJoinRequest struct {
 func (MatchJoinRequest) matchNotification() {}
 
 type MatchRequestResponse struct {
-	Type     string  `json:"type"` // "match_request_response"
-	MatchID  string  `json:"matchId"`
-	PlayerID string  `json:"playerId"`
-	Status   string  `json:"status"`
-	Position *int    `json:"position"`
-	Message  string  `json:"message"`
+	Type     string `json:"type"` // "match_request_response"
+	MatchID  string `json:"matchId"`
+	PlayerID string `json:"playerId"`
+	Status   string `json:"status"`
+	Position *int   `json:"position"`
+	Message  string `json:"message"`
 }
 
 func (MatchRequestResponse) matchNotification() {}
@@ -79,7 +79,7 @@ type Hub struct {
 	mu     sync.RWMutex
 
 	// Payment subscriptions
-	paymentSubs map[string]map[*websocket.Conn]struct{} // paymentId -> conns
+	paymentSubs  map[string]map[*websocket.Conn]struct{} // paymentId -> conns
 	connPayments map[*websocket.Conn]map[string]struct{} // conn -> paymentIds
 
 	// Match subscriptions

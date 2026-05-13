@@ -15,13 +15,13 @@ import (
 
 // Config holds AWS S3 settings.
 type Config struct {
-	Region          string
-	AccessKeyID     string
-	SecretAccessKey string
-	Endpoint        string // optional: LocalStack override
-	BucketProfile       string
-	BucketMatches       string
-	BucketBusinessDocs  string
+	Region             string
+	AccessKeyID        string
+	SecretAccessKey    string
+	Endpoint           string // optional: LocalStack override
+	BucketProfile      string
+	BucketMatches      string
+	BucketBusinessDocs string
 }
 
 // Client wraps the AWS S3 client.
@@ -102,10 +102,10 @@ func (c *Client) PutObject(ctx context.Context, bucket, key string, body io.Read
 // PutObjectEncrypted uploads an object to S3 with server-side encryption.
 func (c *Client) PutObjectEncrypted(ctx context.Context, bucket, key string, body io.Reader, contentType string) error {
 	_, err := c.s3.PutObject(ctx, &s3.PutObjectInput{
-		Bucket:            aws.String(bucket),
-		Key:               aws.String(key),
-		Body:              body,
-		ContentType:       aws.String(contentType),
+		Bucket:               aws.String(bucket),
+		Key:                  aws.String(key),
+		Body:                 body,
+		ContentType:          aws.String(contentType),
 		ServerSideEncryption: types.ServerSideEncryptionAes256,
 	})
 	return err

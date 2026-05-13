@@ -303,6 +303,6 @@ func main() {
 
 func intFromStr(s string) int {
 	n := 0
-	fmt.Sscanf(s, "%d", &n)
+	_, _ = fmt.Sscanf(s, "%d", &n)
 	return n
 }

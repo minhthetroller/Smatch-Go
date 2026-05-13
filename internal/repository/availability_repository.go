@@ -19,11 +19,11 @@ type RawSubCourt struct {
 
 // RawBooking is a minimal row for slot conflict checks.
 type RawBooking struct {
-	ID          string
-	SubCourtID  string
-	StartTime   string
-	EndTime     string
-	Status      string
+	ID         string
+	SubCourtID string
+	StartTime  string
+	EndTime    string
+	Status     string
 }
 
 // RawPricingRule is a minimal row for price calculation.
@@ -38,10 +38,10 @@ type RawPricingRule struct {
 
 // RawClosure is a minimal row for slot closure checks.
 type RawClosure struct {
-	ID          string
-	SubCourtID  string
-	StartTime   *string // nil = full day
-	EndTime     *string
+	ID         string
+	SubCourtID string
+	StartTime  *string // nil = full day
+	EndTime    *string
 }
 
 // BookingRow is a full booking row with joined names.

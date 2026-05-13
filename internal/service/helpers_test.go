@@ -45,8 +45,8 @@ func TestIsValidTime(t *testing.T) {
 		{"06:00", true},
 		{"24:00", false},
 		{"12:60", false},
-		{"1:30", false},  // missing leading zero
-		{"12:5", false},  // missing leading zero
+		{"1:30", false}, // missing leading zero
+		{"12:5", false}, // missing leading zero
 		{"", false},
 		{"noon", false},
 		{"12:30:00", false}, // has seconds

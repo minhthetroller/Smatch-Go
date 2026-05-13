@@ -105,5 +105,3 @@ func (r *AdminRepository) ListAuditLogs(ctx context.Context, page, limit int) ([
 	}
 	return logs, total, rows.Err()
 }
-
-

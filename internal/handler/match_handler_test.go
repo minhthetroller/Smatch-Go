@@ -40,7 +40,7 @@ func TestMapMatchRowToDTO(t *testing.T) {
 		CourtAddressStr: "123 Main St, Ba Dinh, Ha Noi",
 		HostFirstName:   &firstName,
 		HostLastName:    &lastName,
-		HostUsername:     &username,
+		HostUsername:    &username,
 		SlotsAccepted:   2,
 	}
 
@@ -116,7 +116,7 @@ func TestMapPlayerRowToDTO(t *testing.T) {
 		},
 		UserFirstName: &firstName,
 		UserLastName:  &lastName,
-		UserUsername:   &username,
+		UserUsername:  &username,
 		UserPhotoURL:  &photoURL,
 	}
 

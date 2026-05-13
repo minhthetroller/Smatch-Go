@@ -23,10 +23,10 @@ type CourtOwnerCourtResponse struct {
 
 // CourtStatsResponse sent to court owner web app
 type CourtStatsResponse struct {
-	TotalBookings      int64   `json:"totalBookings"`
-	TotalRevenue       int64   `json:"totalRevenue"`
-	OccupancyRate      float64 `json:"occupancyRate"`
-	CancellationRate   float64 `json:"cancellationRate"`
+	TotalBookings    int64   `json:"totalBookings"`
+	TotalRevenue     int64   `json:"totalRevenue"`
+	OccupancyRate    float64 `json:"occupancyRate"`
+	CancellationRate float64 `json:"cancellationRate"`
 }
 
 // CloseCourtRequest from court owner web app

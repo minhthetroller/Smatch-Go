@@ -79,16 +79,16 @@ type CreateOrderResponse struct {
 
 // CallbackData parsed from ZaloPay callback.
 type CallbackData struct {
-	AppID       int    `json:"app_id"`
-	AppTransID  string `json:"app_trans_id"`
-	AppTime     int64  `json:"app_time"`
-	AppUser     string `json:"app_user"`
-	Amount      int    `json:"amount"`
-	EmbedData   string `json:"embed_data"`
-	Item        string `json:"item"`
-	ZPTransID   int64  `json:"zp_trans_id"`
-	ServerTime  int64  `json:"server_time"`
-	Channel     int    `json:"channel"`
+	AppID      int    `json:"app_id"`
+	AppTransID string `json:"app_trans_id"`
+	AppTime    int64  `json:"app_time"`
+	AppUser    string `json:"app_user"`
+	Amount     int    `json:"amount"`
+	EmbedData  string `json:"embed_data"`
+	Item       string `json:"item"`
+	ZPTransID  int64  `json:"zp_trans_id"`
+	ServerTime int64  `json:"server_time"`
+	Channel    int    `json:"channel"`
 }
 
 // EmbedData stored inside ZaloPay order.

@@ -2,8 +2,10 @@ package handler
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/smatch/badminton-backend/internal/domain"
@@ -34,6 +36,7 @@ func (h *CourtHandler) List(w http.ResponseWriter, r *http.Request) {
 }
 
 // GET /api/courts/nearby - Courts within radius.
+// radius param: required to include "km" suffix (e.g. radius=10km). Range: [5, 50] km. Default: 5km.
 func (h *CourtHandler) Nearby(w http.ResponseWriter, r *http.Request) {
 	lat, err1 := strconv.ParseFloat(r.URL.Query().Get("lat"), 64)
 	lng, err2 := strconv.ParseFloat(r.URL.Query().Get("lng"), 64)
@@ -41,12 +44,29 @@ func (h *CourtHandler) Nearby(w http.ResponseWriter, r *http.Request) {
 		sendError(w, "lat and lng are required", "BAD_REQUEST", 400)
 		return
 	}
-	radius := 5000.0
-	if r.URL.Query().Get("radius") != "" {
-		radius, _ = strconv.ParseFloat(r.URL.Query().Get("radius"), 64)
+
+	const minRadiusKm = 5.0
+	const maxRadiusKm = 50.0
+
+	radiusKm := minRadiusKm
+	if raw := r.URL.Query().Get("radius"); raw != "" {
+		if !strings.HasSuffix(raw, "km") {
+			sendError(w, fmt.Sprintf("radius must include unit suffix, e.g. radius=%.0fkm (accepted range: %.0f–%.0fkm)", minRadiusKm, minRadiusKm, maxRadiusKm), "BAD_REQUEST", 400)
+			return
+		}
+		parsed, err := strconv.ParseFloat(strings.TrimSuffix(raw, "km"), 64)
+		if err != nil {
+			sendError(w, "radius value must be a number in km, e.g. radius=10km", "BAD_REQUEST", 400)
+			return
+		}
+		radiusKm = parsed
+	}
+	if radiusKm < minRadiusKm || radiusKm > maxRadiusKm {
+		sendError(w, fmt.Sprintf("radius must be between %.0fkm and %.0fkm", minRadiusKm, maxRadiusKm), "BAD_REQUEST", 400)
+		return
 	}
 
-	courts, distances, err := h.courtRepo.FindNearby(r.Context(), lat, lng, radius)
+	courts, distances, err := h.courtRepo.FindNearby(r.Context(), lat, lng, radiusKm*1000)
 	if err != nil {
 		sendError(w, "Failed to get courts", "INTERNAL_ERROR", 500)
 		return
@@ -55,7 +75,10 @@ func (h *CourtHandler) Nearby(w http.ResponseWriter, r *http.Request) {
 	for i, c := range courts {
 		cr := mapCourtToDTO(c)
 		if i < len(distances) {
-			cr.Distance = &distances[i]
+			distMeters := distances[i]
+			distKm := distMeters / 1000
+			cr.Distance = &distMeters
+			cr.DistanceKm = &distKm
 		}
 		resp[i] = cr
 	}

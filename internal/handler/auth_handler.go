@@ -310,14 +310,28 @@ func (h *AuthHandler) Convert(w http.ResponseWriter, r *http.Request) {
 		"provider":     req.Provider,
 		"is_anonymous": false,
 	}
-	if req.Email != nil    { fields["email"] = *req.Email }
-	if req.Username != nil { fields["username"] = *req.Username }
-	if req.NewFirebaseUID != nil { fields["firebase_uid"] = *req.NewFirebaseUID }
+	if req.Email != nil {
+		fields["email"] = *req.Email
+	}
+	if req.Username != nil {
+		fields["username"] = *req.Username
+	}
+	if req.NewFirebaseUID != nil {
+		fields["firebase_uid"] = *req.NewFirebaseUID
+	}
 	if req.Profile != nil {
-		if req.Profile.FirstName != nil { fields["first_name"] = *req.Profile.FirstName }
-		if req.Profile.LastName != nil  { fields["last_name"] = *req.Profile.LastName }
-		if req.Profile.Gender != nil    { fields["gender"] = *req.Profile.Gender }
-		if req.Profile.PhoneNumber != nil { fields["phone_number"] = *req.Profile.PhoneNumber }
+		if req.Profile.FirstName != nil {
+			fields["first_name"] = *req.Profile.FirstName
+		}
+		if req.Profile.LastName != nil {
+			fields["last_name"] = *req.Profile.LastName
+		}
+		if req.Profile.Gender != nil {
+			fields["gender"] = *req.Profile.Gender
+		}
+		if req.Profile.PhoneNumber != nil {
+			fields["phone_number"] = *req.Profile.PhoneNumber
+		}
 	}
 
 	updated, err := h.userRepo.UpdateProfile(r.Context(), user.ID, fields)

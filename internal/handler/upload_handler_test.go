@@ -29,7 +29,7 @@ func TestUploadHandler_NilUploadService(t *testing.T) {
 	body := &bytes.Buffer{}
 	writer := multipart.NewWriter(body)
 	part, _ := writer.CreateFormFile("image", "test.jpg")
-	part.Write([]byte("fake-image-data"))
+	_, _ = part.Write([]byte("fake-image-data"))
 	writer.Close()
 
 	req := httptest.NewRequest(http.MethodPost, "/api/uploads/match-image", body)

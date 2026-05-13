@@ -28,12 +28,12 @@ type PaymentResponse struct {
 
 // CreatePaymentResponse sent to Flutter after payment creation
 type CreatePaymentResponse struct {
-	Payment       PaymentResponse `json:"payment"`
-	OrderURL      string          `json:"orderUrl"`
-	QRCode        QRCodeData      `json:"qrCode"`
-	ZPTransToken  *string         `json:"zpTransToken"`
-	ExpireAt      string          `json:"expireAt"`
-	WsSubscribeURL string         `json:"wsSubscribeUrl"`
+	Payment        PaymentResponse `json:"payment"`
+	OrderURL       string          `json:"orderUrl"`
+	QRCode         QRCodeData      `json:"qrCode"`
+	ZPTransToken   *string         `json:"zpTransToken"`
+	ExpireAt       string          `json:"expireAt"`
+	WsSubscribeURL string          `json:"wsSubscribeUrl"`
 }
 
 // ZaloPayCallbackRequest from ZaloPay webhook

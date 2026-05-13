@@ -146,7 +146,7 @@ func (r *MatchRepository) FindAll(ctx context.Context, f MatchFilter) ([]*MatchR
 		i++
 	}
 	if !f.IncludeExpired {
-		where = append(where, fmt.Sprintf("(m.date > CURRENT_DATE OR (m.date = CURRENT_DATE AND m.end_time > CURRENT_TIME))"))
+		where = append(where, "(m.date > CURRENT_DATE OR (m.date = CURRENT_DATE AND m.end_time > CURRENT_TIME))")
 	}
 
 	whereClause := strings.Join(where, " AND ")
