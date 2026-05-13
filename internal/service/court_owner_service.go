@@ -10,7 +10,7 @@ import (
 )
 
 type CourtOwnerService struct {
-	coRepo   *repository.CourtOwnerRepository
+	coRepo    *repository.CourtOwnerRepository
 	courtRepo *repository.CourtRepository
 }
 

@@ -10,9 +10,9 @@ import (
 )
 
 type AdminService struct {
-	bpRepo   *repository.BusinessProfileRepository
-	userRepo *repository.UserRepository
-	coRepo   *repository.CourtOwnerRepository
+	bpRepo    *repository.BusinessProfileRepository
+	userRepo  *repository.UserRepository
+	coRepo    *repository.CourtOwnerRepository
 	adminRepo *repository.AdminRepository
 }
 

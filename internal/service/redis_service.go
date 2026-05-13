@@ -18,7 +18,7 @@ const (
 	matchJoinQueuePrefix = "match:join:queue"
 	matchPlayerLock      = "match:player:lock"
 
-	searchCacheTTL  = 300  // seconds
+	searchCacheTTL   = 300   // seconds
 	searchPopularTTL = 86400 // seconds
 )
 

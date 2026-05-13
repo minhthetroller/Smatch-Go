@@ -697,4 +697,3 @@ func buildDisplayName(firstName, lastName, username *string) string {
 	}
 	return "Anonymous"
 }
-

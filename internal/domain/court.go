@@ -6,9 +6,9 @@ import (
 )
 
 type Court struct {
-	ID          string
-	Name        string
-	Description *string
+	ID           string
+	Name         string
+	Description  *string
 	PhoneNumbers []string
 
 	AddressStreet   *string
@@ -40,27 +40,27 @@ type SubCourt struct {
 }
 
 type PricingRule struct {
-	ID          string
-	CourtID     string
-	Name        string
-	DayType     string // 'weekday', 'weekend', 'holiday'
-	StartTime   string // HH:MM
-	EndTime     string // HH:MM
+	ID           string
+	CourtID      string
+	Name         string
+	DayType      string // 'weekday', 'weekend', 'holiday'
+	StartTime    string // HH:MM
+	EndTime      string // HH:MM
 	PricePerHour int
-	IsActive    bool
+	IsActive     bool
 
 	CreatedAt time.Time
 	UpdatedAt time.Time
 }
 
 type SubCourtClosure struct {
-	ID          string
-	SubCourtID  string
-	Date        time.Time
-	StartTime   *string // nil = full day
-	EndTime     *string
-	Reason      *string
-	CreatedAt   time.Time
+	ID         string
+	SubCourtID string
+	Date       time.Time
+	StartTime  *string // nil = full day
+	EndTime    *string
+	Reason     *string
+	CreatedAt  time.Time
 }
 
 type Holiday struct {

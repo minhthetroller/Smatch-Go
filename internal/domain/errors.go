@@ -9,14 +9,14 @@ var (
 	ErrForbidden  = errors.New("forbidden")
 	ErrUnauth     = errors.New("unauthorized")
 
-	ErrBusinessProfileNotFound  = errors.New("business profile not found")
+	ErrBusinessProfileNotFound      = errors.New("business profile not found")
 	ErrBusinessProfileAlreadyExists = errors.New("business profile already exists")
 	ErrBusinessProfileNotApproved   = errors.New("business profile not approved")
-	ErrNotCourtOwner = errors.New("not a court owner")
-	ErrNotAdmin      = errors.New("not an admin")
-	ErrInvalidFileType = errors.New("invalid file type")
-	ErrUploadFailed    = errors.New("upload failed")
-	ErrCourtNotOwned   = errors.New("court not owned")
+	ErrNotCourtOwner                = errors.New("not a court owner")
+	ErrNotAdmin                     = errors.New("not an admin")
+	ErrInvalidFileType              = errors.New("invalid file type")
+	ErrUploadFailed                 = errors.New("upload failed")
+	ErrCourtNotOwned                = errors.New("court not owned")
 )
 
 type AppError struct {

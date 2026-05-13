@@ -2,7 +2,7 @@ package dto
 
 // VerifyTokenRequest from Flutter
 type VerifyTokenRequest struct {
-	IDToken string      `json:"idToken" validate:"required"`
+	IDToken string                `json:"idToken" validate:"required"`
 	Profile *UpdateProfileRequest `json:"profile,omitempty"`
 }
 
@@ -13,10 +13,10 @@ type CreateAnonymousRequest struct {
 
 // ConvertAnonymousRequest from Flutter
 type ConvertAnonymousRequest struct {
-	NewFirebaseUID *string `json:"newFirebaseUid,omitempty"`
-	Provider       string  `json:"provider" validate:"required,oneof=google facebook password"`
-	Email          *string `json:"email,omitempty"`
-	Username       *string `json:"username,omitempty"`
+	NewFirebaseUID *string               `json:"newFirebaseUid,omitempty"`
+	Provider       string                `json:"provider" validate:"required,oneof=google facebook password"`
+	Email          *string               `json:"email,omitempty"`
+	Username       *string               `json:"username,omitempty"`
 	Profile        *UpdateProfileRequest `json:"profile,omitempty"`
 }
 
@@ -41,20 +41,20 @@ type AddFCMTokenRequest struct {
 
 // UserProfileResponse sent to Flutter
 type UserProfileResponse struct {
-	ID          string  `json:"id"`
-	FirebaseUID string  `json:"firebaseUid"`
-	Email       *string `json:"email"`
-	Username    *string `json:"username"`
-	Provider    string  `json:"provider"`
-	IsAnonymous bool    `json:"isAnonymous"`
-	FirstName   *string `json:"firstName"`
-	LastName    *string `json:"lastName"`
-	Gender      *string `json:"gender"`
-	PhoneNumber *string `json:"phoneNumber"`
-	PhotoURL    *string `json:"photoUrl"`
+	ID          string               `json:"id"`
+	FirebaseUID string               `json:"firebaseUid"`
+	Email       *string              `json:"email"`
+	Username    *string              `json:"username"`
+	Provider    string               `json:"provider"`
+	IsAnonymous bool                 `json:"isAnonymous"`
+	FirstName   *string              `json:"firstName"`
+	LastName    *string              `json:"lastName"`
+	Gender      *string              `json:"gender"`
+	PhoneNumber *string              `json:"phoneNumber"`
+	PhotoURL    *string              `json:"photoUrl"`
 	Address     *UserAddressResponse `json:"address"`
-	CreatedAt   string  `json:"createdAt"`
-	UpdatedAt   string  `json:"updatedAt"`
+	CreatedAt   string               `json:"createdAt"`
+	UpdatedAt   string               `json:"updatedAt"`
 }
 
 // UserAddressResponse nested in UserProfileResponse

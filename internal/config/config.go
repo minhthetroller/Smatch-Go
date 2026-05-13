@@ -37,17 +37,17 @@ type Config struct {
 	FirebaseCredentialsFile string
 
 	AWS struct {
-		Region          string
-		AccessKeyID     string
-		SecretAccessKey string
-		Endpoint        string // optional: LocalStack override
-		BucketProfile   string
-		BucketMatches   string
+		Region             string
+		AccessKeyID        string
+		SecretAccessKey    string
+		Endpoint           string // optional: LocalStack override
+		BucketProfile      string
+		BucketMatches      string
 		BucketBusinessDocs string
 	}
 
-	AdminSecret   string
-	AdminPort     int
+	AdminSecret    string
+	AdminPort      int
 	AdminWebOrigin string
 }
 
