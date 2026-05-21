@@ -18,18 +18,51 @@ import (
 	"github.com/smatch/badminton-backend/internal/service"
 	ws "github.com/smatch/badminton-backend/internal/websocket"
 	zalopay "github.com/smatch/badminton-backend/platform/zalopay"
+	"go.uber.org/zap"
 )
 
 type PaymentHandler struct {
-	paymentRepo *repository.PaymentRepository
-	availRepo   *repository.AvailabilityRepository
-	matchRepo   *repository.MatchRepository
+	paymentRepo paymentStore
+	availRepo   availabilityStore
+	matchRepo   matchPaymentStore
 	redis       *service.RedisService
-	zalopay     *zalopay.Client
+	zalopay     paymentGateway
 	hub         *ws.Hub
+	logger      *zap.Logger
 	slotLockTTL int
 	port        int
 	nodeEnv     string
+}
+
+type paymentStore interface {
+	FindByID(ctx context.Context, id string) (*domain.Payment, error)
+	FindByAppTransID(ctx context.Context, appTransID string) (*domain.Payment, error)
+	FindLatestPendingByBookingID(ctx context.Context, bookingID string) (*domain.Payment, error)
+	Create(ctx context.Context, bookingID *string, matchPlayerID *string, paymentType domain.PaymentType, appTransID string, amount int) (*domain.Payment, error)
+	UpdateOrderURL(ctx context.Context, id, orderURL, zpTransToken string) error
+	UpdateStatus(ctx context.Context, id string, status domain.PaymentStatus, zpTransID *string, callbackData json.RawMessage) error
+	UpdateStatusByAppTransID(ctx context.Context, appTransID string, status domain.PaymentStatus, zpTransID *string, callbackData json.RawMessage) (*domain.Payment, error)
+}
+
+type availabilityStore interface {
+	GetBookingByID(ctx context.Context, id string) (*repository.BookingRow, error)
+	GetBookingsByGroupID(ctx context.Context, groupID string) ([]*repository.RawBooking, error)
+	UpdateBookingStatus(ctx context.Context, id, status string) error
+}
+
+type matchPaymentStore interface {
+	FindByID(ctx context.Context, id string) (*repository.MatchRow, error)
+	FindPlayerByID(ctx context.Context, playerID string) (*repository.MatchPlayerRow, error)
+	GetNextPosition(ctx context.Context, matchID string) (int, error)
+	UpdatePlayerStatus(ctx context.Context, playerID string, status domain.MatchPlayerStatus, position *int) (*repository.MatchPlayerRow, error)
+	CountAcceptedPlayers(ctx context.Context, matchID string) (int, error)
+	UpdateStatus(ctx context.Context, id string, status domain.MatchStatus) error
+}
+
+type paymentGateway interface {
+	GenerateAppTransID(bookingID string) string
+	CreateOrder(bookingID, appTransID, description, guestName, guestPhone string, amount int, embedData zalopay.EmbedData) (*zalopay.CreateOrderResponse, error)
+	VerifyCallback(data, mac string) (*zalopay.CallbackData, bool)
 }
 
 func NewPaymentHandler(
@@ -39,9 +72,13 @@ func NewPaymentHandler(
 	rs *service.RedisService,
 	zp *zalopay.Client,
 	hub *ws.Hub,
+	logger *zap.Logger,
 	slotLockTTL, port int,
 	nodeEnv string,
 ) *PaymentHandler {
+	if logger == nil {
+		logger = zap.NewNop()
+	}
 	return &PaymentHandler{
 		paymentRepo: pr,
 		availRepo:   ar,
@@ -49,10 +86,57 @@ func NewPaymentHandler(
 		redis:       rs,
 		zalopay:     zp,
 		hub:         hub,
+		logger:      logger,
 		slotLockTTL: slotLockTTL,
 		port:        port,
 		nodeEnv:     nodeEnv,
 	}
+}
+
+func (h *PaymentHandler) log() *zap.Logger {
+	if h.logger == nil {
+		return zap.NewNop()
+	}
+	return h.logger
+}
+
+func requestLogFields(r *http.Request) []zap.Field {
+	user := middleware.UserFromContext(r.Context())
+	fields := []zap.Field{
+		zap.String("method", r.Method),
+		zap.String("path", r.URL.Path),
+		zap.String("remote_addr", r.RemoteAddr),
+		zap.Bool("has_authorization", r.Header.Get("Authorization") != ""),
+		zap.Bool("authenticated", user != nil),
+	}
+	if user != nil {
+		fields = append(fields,
+			zap.String("user_id", user.ID),
+			zap.Bool("user_is_anonymous", user.IsAnonymous),
+		)
+	}
+	return fields
+}
+
+func phoneLast4(phone string) string {
+	if len(phone) < 4 {
+		return ""
+	}
+	return phone[len(phone)-4:]
+}
+
+func (h *PaymentHandler) acquireSlotLocks(ctx context.Context, slots []service.SlotLockSpec) (bool, error) {
+	if h.redis == nil || len(slots) == 0 {
+		return true, nil
+	}
+	return h.redis.AcquireSlotLocks(ctx, slots)
+}
+
+func (h *PaymentHandler) releaseSlotLocks(ctx context.Context, slots []service.SlotLockSpec) {
+	if h.redis == nil || len(slots) == 0 {
+		return
+	}
+	h.redis.ReleaseSlotLocks(ctx, slots)
 }
 
 // POST /api/payments/create
@@ -61,10 +145,13 @@ func (h *PaymentHandler) CreatePayment(w http.ResponseWriter, r *http.Request) {
 
 	var req dto.CreatePaymentRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		h.log().Warn("payment create invalid request body", append(requestLogFields(r), zap.Error(err))...)
 		sendError(w, "Invalid request body", "BAD_REQUEST", 400)
 		return
 	}
+	h.log().Info("payment create request received", append(requestLogFields(r), zap.String("booking_id", req.BookingID))...)
 	if req.BookingID == "" {
+		h.log().Warn("payment create missing booking id", requestLogFields(r)...)
 		sendError(w, "bookingId is required", "BAD_REQUEST", 400)
 		return
 	}
@@ -72,10 +159,38 @@ func (h *PaymentHandler) CreatePayment(w http.ResponseWriter, r *http.Request) {
 	// 1. Get booking and validate.
 	booking, err := h.availRepo.GetBookingByID(r.Context(), req.BookingID)
 	if err != nil || booking == nil {
+		fields := append(requestLogFields(r), zap.String("booking_id", req.BookingID))
+		if err != nil {
+			fields = append(fields, zap.Error(err))
+		}
+		h.log().Warn("payment create booking not found", fields...)
 		sendError(w, "Booking not found", "NOT_FOUND", 404)
 		return
 	}
+	h.log().Info("payment create booking loaded",
+		append(requestLogFields(r),
+			zap.String("booking_id", booking.ID),
+			zap.String("booking_status", booking.Status),
+			zap.Int("amount", booking.TotalPrice),
+			zap.Bool("has_guest_name", booking.GuestName != ""),
+			zap.Bool("has_guest_phone", booking.GuestPhone != ""),
+			zap.String("guest_phone_last4", phoneLast4(booking.GuestPhone)),
+			zap.Bool("has_guest_email", booking.GuestEmail != nil && *booking.GuestEmail != ""),
+			zap.Bool("has_user_id", booking.UserID != nil),
+			zap.String("court_id", booking.CourtID),
+			zap.String("sub_court_id", booking.SubCourtID),
+			zap.String("date", booking.Date),
+			zap.String("start_time", booking.StartTime),
+			zap.String("end_time", booking.EndTime),
+		)...,
+	)
 	if booking.Status != "pending" {
+		h.log().Warn("payment create booking invalid status",
+			append(requestLogFields(r),
+				zap.String("booking_id", req.BookingID),
+				zap.String("booking_status", booking.Status),
+			)...,
+		)
 		sendError(w, "Booking is not in pending status", "INVALID_STATUS", 400)
 		return
 	}
@@ -88,18 +203,47 @@ func (h *PaymentHandler) CreatePayment(w http.ResponseWriter, r *http.Request) {
 			for _, gb := range groupBookings {
 				groupBookingIDs = append(groupBookingIDs, gb.ID)
 			}
+		} else {
+			h.log().Warn("payment create group bookings lookup failed",
+				append(requestLogFields(r),
+					zap.String("booking_id", req.BookingID),
+					zap.String("group_id", *booking.GroupID),
+					zap.Error(err),
+				)...,
+			)
 		}
 	}
 	if len(groupBookingIDs) == 0 {
 		groupBookingIDs = []string{req.BookingID}
 	}
+	h.log().Info("payment create group resolved",
+		append(requestLogFields(r),
+			zap.String("booking_id", req.BookingID),
+			zap.Int("group_booking_count", len(groupBookingIDs)),
+			zap.Bool("has_group_id", booking.GroupID != nil),
+		)...,
+	)
 
 	// 3. Check for existing pending payment.
 	existingPayment, err := h.paymentRepo.FindLatestPendingByBookingID(r.Context(), req.BookingID)
 	if err == nil && existingPayment != nil {
+		h.log().Info("payment create returning existing pending payment",
+			append(requestLogFields(r),
+				zap.String("booking_id", req.BookingID),
+				zap.String("payment_id", existingPayment.ID),
+				zap.String("payment_status", string(existingPayment.Status)),
+			)...,
+		)
 		// Return existing payment with a new QR code.
 		qrResp, err := generateQRCode(existingPayment.OrderURL)
 		if err != nil {
+			h.log().Error("payment create existing payment qr generation failed",
+				append(requestLogFields(r),
+					zap.String("booking_id", req.BookingID),
+					zap.String("payment_id", existingPayment.ID),
+					zap.Error(err),
+				)...,
+			)
 			sendError(w, "Failed to generate QR code", "INTERNAL_ERROR", 500)
 			return
 		}
@@ -118,6 +262,13 @@ func (h *PaymentHandler) CreatePayment(w http.ResponseWriter, r *http.Request) {
 			WsSubscribeURL: wsURL,
 		}, 200)
 		return
+	} else if err != nil {
+		h.log().Warn("payment create pending payment lookup failed",
+			append(requestLogFields(r),
+				zap.String("booking_id", req.BookingID),
+				zap.Error(err),
+			)...,
+		)
 	}
 
 	// 4. Acquire Redis slot locks for all bookings in group.
@@ -136,22 +287,53 @@ func (h *PaymentHandler) CreatePayment(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	if len(slots) > 0 {
-		ok, err := h.redis.AcquireSlotLocks(r.Context(), slots)
-		if err != nil || !ok {
-			sendError(w, "Time slot is currently being processed by another user. Please try again.", "SLOT_LOCKED", 409)
-			return
+	ok, err := h.acquireSlotLocks(r.Context(), slots)
+	if err != nil || !ok {
+		fields := append(requestLogFields(r),
+			zap.String("booking_id", req.BookingID),
+			zap.Int("slot_count", len(slots)),
+			zap.Bool("slot_lock_acquired", ok),
+			zap.Bool("redis_configured", h.redis != nil),
+		)
+		if err != nil {
+			fields = append(fields, zap.Error(err))
 		}
+		h.log().Warn("payment create slot lock failed", fields...)
+		sendError(w, "Time slot is currently being processed by another user. Please try again.", "SLOT_LOCKED", 409)
+		return
 	}
+	h.log().Info("payment create slot lock acquired",
+		append(requestLogFields(r),
+			zap.String("booking_id", req.BookingID),
+			zap.Int("slot_count", len(slots)),
+			zap.Bool("redis_configured", h.redis != nil),
+		)...,
+	)
 
 	// 5. Create payment record.
 	appTransID := h.zalopay.GenerateAppTransID(req.BookingID)
 	payment, err := h.paymentRepo.Create(r.Context(), &req.BookingID, nil, domain.PaymentTypeBooking, appTransID, booking.TotalPrice)
 	if err != nil {
-		h.redis.ReleaseSlotLocks(r.Context(), slots)
+		h.releaseSlotLocks(r.Context(), slots)
+		h.log().Error("payment create record insert failed",
+			append(requestLogFields(r),
+				zap.String("booking_id", req.BookingID),
+				zap.String("app_trans_id", appTransID),
+				zap.Int("amount", booking.TotalPrice),
+				zap.Error(err),
+			)...,
+		)
 		sendError(w, "Failed to create payment", "INTERNAL_ERROR", 500)
 		return
 	}
+	h.log().Info("payment create record inserted",
+		append(requestLogFields(r),
+			zap.String("booking_id", req.BookingID),
+			zap.String("payment_id", payment.ID),
+			zap.String("app_trans_id", appTransID),
+			zap.Int("amount", booking.TotalPrice),
+		)...,
+	)
 
 	// 6. Call ZaloPay createOrder.
 	embedData := zalopay.EmbedData{BookingID: req.BookingID}
@@ -166,21 +348,60 @@ func (h *PaymentHandler) CreatePayment(w http.ResponseWriter, r *http.Request) {
 	)
 	if err != nil || zpResp == nil || zpResp.ReturnCode != 1 {
 		// 7. ZaloPay failed: release locks and return error.
-		h.redis.ReleaseSlotLocks(r.Context(), slots)
+		h.releaseSlotLocks(r.Context(), slots)
 		msg := "Failed to create payment order"
+		fields := append(requestLogFields(r),
+			zap.String("booking_id", req.BookingID),
+			zap.String("payment_id", payment.ID),
+			zap.String("app_trans_id", appTransID),
+		)
+		if err != nil {
+			fields = append(fields, zap.Error(err))
+		}
 		if zpResp != nil {
 			msg = zpResp.ReturnMessage
+			fields = append(fields,
+				zap.Int("zalopay_return_code", zpResp.ReturnCode),
+				zap.Int("zalopay_sub_return_code", zpResp.SubReturnCode),
+				zap.String("zalopay_return_message", zpResp.ReturnMessage),
+			)
 		}
+		h.log().Warn("payment create gateway order failed", fields...)
 		sendError(w, msg, "PAYMENT_GATEWAY_ERROR", 502)
 		return
 	}
+	h.log().Info("payment create gateway order succeeded",
+		append(requestLogFields(r),
+			zap.String("booking_id", req.BookingID),
+			zap.String("payment_id", payment.ID),
+			zap.String("app_trans_id", appTransID),
+			zap.Int("zalopay_return_code", zpResp.ReturnCode),
+		)...,
+	)
 
 	// Update payment with order URL and trans token.
-	h.paymentRepo.UpdateOrderURL(r.Context(), payment.ID, zpResp.OrderURL, zpResp.ZPTransToken) //nolint:errcheck
+	if err := h.paymentRepo.UpdateOrderURL(r.Context(), payment.ID, zpResp.OrderURL, zpResp.ZPTransToken); err != nil {
+		h.log().Warn("payment create update order url failed",
+			append(requestLogFields(r),
+				zap.String("booking_id", req.BookingID),
+				zap.String("payment_id", payment.ID),
+				zap.Error(err),
+			)...,
+		)
+	}
 
 	// Refresh payment.
-	payment, err = h.paymentRepo.FindByID(r.Context(), payment.ID)
+	paymentID := payment.ID
+	payment, err = h.paymentRepo.FindByID(r.Context(), paymentID)
 	if err != nil || payment == nil {
+		fields := append(requestLogFields(r),
+			zap.String("booking_id", req.BookingID),
+			zap.String("payment_id", paymentID),
+		)
+		if err != nil {
+			fields = append(fields, zap.Error(err))
+		}
+		h.log().Error("payment create refresh failed", fields...)
 		sendError(w, "Failed to retrieve payment", "INTERNAL_ERROR", 500)
 		return
 	}
@@ -188,6 +409,13 @@ func (h *PaymentHandler) CreatePayment(w http.ResponseWriter, r *http.Request) {
 	// Generate QR code.
 	qrResp, err := generateQRCode(&zpResp.OrderURL)
 	if err != nil {
+		h.log().Error("payment create qr generation failed",
+			append(requestLogFields(r),
+				zap.String("booking_id", req.BookingID),
+				zap.String("payment_id", payment.ID),
+				zap.Error(err),
+			)...,
+		)
 		sendError(w, "Failed to generate QR code", "INTERNAL_ERROR", 500)
 		return
 	}
@@ -203,27 +431,61 @@ func (h *PaymentHandler) CreatePayment(w http.ResponseWriter, r *http.Request) {
 		ExpireAt:       expireAt,
 		WsSubscribeURL: wsURL,
 	}, 201)
+	h.log().Info("payment create response sent",
+		append(requestLogFields(r),
+			zap.String("booking_id", req.BookingID),
+			zap.String("payment_id", payment.ID),
+			zap.String("payment_status", string(payment.Status)),
+			zap.String("expire_at", expireAt),
+		)...,
+	)
 }
 
 // POST /api/payments/callback - ZaloPay webhook.
 func (h *PaymentHandler) Callback(w http.ResponseWriter, r *http.Request) {
 	var req dto.ZaloPayCallbackRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		h.log().Warn("payment callback invalid request body", append(requestLogFields(r), zap.Error(err))...)
 		json.NewEncoder(w).Encode(dto.ZaloPayCallbackResponse{ReturnCode: -1, ReturnMessage: "invalid request"}) //nolint:errcheck
 		return
 	}
+	h.log().Info("payment callback received",
+		append(requestLogFields(r),
+			zap.Int("callback_type", req.Type),
+			zap.Int("data_length", len(req.Data)),
+			zap.Bool("has_mac", req.MAC != ""),
+		)...,
+	)
 
 	// 1. Verify MAC.
 	cbData, valid := h.zalopay.VerifyCallback(req.Data, req.MAC)
 	if !valid || cbData == nil {
+		h.log().Warn("payment callback mac verification failed",
+			append(requestLogFields(r),
+				zap.Int("callback_type", req.Type),
+				zap.Int("data_length", len(req.Data)),
+			)...,
+		)
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(dto.ZaloPayCallbackResponse{ReturnCode: -1, ReturnMessage: "mac not equal"}) //nolint:errcheck
 		return
 	}
+	h.log().Info("payment callback verified",
+		append(requestLogFields(r),
+			zap.String("app_trans_id", cbData.AppTransID),
+			zap.Int("amount", cbData.Amount),
+			zap.Int64("zp_trans_id", cbData.ZPTransID),
+		)...,
+	)
 
 	// 2. Parse app_trans_id and find payment.
 	payment, err := h.paymentRepo.FindByAppTransID(r.Context(), cbData.AppTransID)
 	if err != nil || payment == nil {
+		fields := append(requestLogFields(r), zap.String("app_trans_id", cbData.AppTransID))
+		if err != nil {
+			fields = append(fields, zap.Error(err))
+		}
+		h.log().Warn("payment callback payment not found", fields...)
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(dto.ZaloPayCallbackResponse{ReturnCode: -1, ReturnMessage: "payment not found"}) //nolint:errcheck
 		return
@@ -231,6 +493,13 @@ func (h *PaymentHandler) Callback(w http.ResponseWriter, r *http.Request) {
 
 	if payment.Status != domain.PaymentStatusPending {
 		// Already processed.
+		h.log().Info("payment callback ignored non-pending payment",
+			append(requestLogFields(r),
+				zap.String("payment_id", payment.ID),
+				zap.String("app_trans_id", cbData.AppTransID),
+				zap.String("payment_status", string(payment.Status)),
+			)...,
+		)
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(dto.ZaloPayCallbackResponse{ReturnCode: 1, ReturnMessage: "success"}) //nolint:errcheck
 		return
@@ -246,16 +515,39 @@ func (h *PaymentHandler) Callback(w http.ResponseWriter, r *http.Request) {
 		json.RawMessage(rawData),
 	)
 	if err != nil || updatedPayment == nil {
+		fields := append(requestLogFields(r), zap.String("app_trans_id", cbData.AppTransID))
+		if err != nil {
+			fields = append(fields, zap.Error(err))
+		}
+		h.log().Error("payment callback status update failed", fields...)
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(dto.ZaloPayCallbackResponse{ReturnCode: -1, ReturnMessage: "update failed"}) //nolint:errcheck
 		return
 	}
+	h.log().Info("payment callback marked payment success",
+		append(requestLogFields(r),
+			zap.String("payment_id", updatedPayment.ID),
+			zap.String("app_trans_id", cbData.AppTransID),
+			zap.Stringp("booking_id", updatedPayment.BookingID),
+			zap.Stringp("match_player_id", updatedPayment.MatchPlayerID),
+		)...,
+	)
 
 	// 4. Update booking status to confirmed and release slot locks.
 	if updatedPayment.BookingID != nil {
 		booking, err := h.availRepo.GetBookingByID(r.Context(), *updatedPayment.BookingID)
 		if err == nil && booking != nil {
 			h.availRepo.UpdateBookingStatus(r.Context(), *updatedPayment.BookingID, "confirmed") //nolint:errcheck
+			h.log().Info("payment callback confirmed booking",
+				append(requestLogFields(r),
+					zap.String("payment_id", updatedPayment.ID),
+					zap.String("booking_id", *updatedPayment.BookingID),
+					zap.String("sub_court_id", booking.SubCourtID),
+					zap.String("date", booking.Date),
+					zap.String("start_time", booking.StartTime),
+					zap.String("end_time", booking.EndTime),
+				)...,
+			)
 
 			// Release slot locks.
 			slots := []service.SlotLockSpec{{
@@ -265,7 +557,7 @@ func (h *PaymentHandler) Callback(w http.ResponseWriter, r *http.Request) {
 				EndTime:    booking.EndTime,
 				BookingID:  *updatedPayment.BookingID,
 			}}
-			h.redis.ReleaseSlotLocks(r.Context(), slots)
+			h.releaseSlotLocks(r.Context(), slots)
 
 			// Release group booking locks if any.
 			if booking.GroupID != nil {
@@ -274,17 +566,40 @@ func (h *PaymentHandler) Callback(w http.ResponseWriter, r *http.Request) {
 					for _, gb := range groupBookings {
 						if gb.ID != *updatedPayment.BookingID {
 							h.availRepo.UpdateBookingStatus(r.Context(), gb.ID, "confirmed") //nolint:errcheck
-							h.redis.ReleaseSlotLocks(r.Context(), []service.SlotLockSpec{{
+							h.releaseSlotLocks(r.Context(), []service.SlotLockSpec{{
 								SubCourtID: gb.SubCourtID,
-								Date:       gb.StartTime, // date comes from booking row
+								Date:       gb.Date,
 								StartTime:  gb.StartTime,
 								EndTime:    gb.EndTime,
 								BookingID:  gb.ID,
 							}})
 						}
 					}
+					h.log().Info("payment callback confirmed group bookings",
+						append(requestLogFields(r),
+							zap.String("payment_id", updatedPayment.ID),
+							zap.String("group_id", *booking.GroupID),
+							zap.Int("group_booking_count", len(groupBookings)),
+						)...,
+					)
+				} else {
+					h.log().Warn("payment callback group bookings lookup failed",
+						append(requestLogFields(r),
+							zap.String("payment_id", updatedPayment.ID),
+							zap.String("group_id", *booking.GroupID),
+							zap.Error(err),
+						)...,
+					)
 				}
 			}
+		} else if err != nil {
+			h.log().Warn("payment callback booking lookup failed",
+				append(requestLogFields(r),
+					zap.String("payment_id", updatedPayment.ID),
+					zap.String("booking_id", *updatedPayment.BookingID),
+					zap.Error(err),
+				)...,
+			)
 		}
 	}
 
@@ -294,6 +609,14 @@ func (h *PaymentHandler) Callback(w http.ResponseWriter, r *http.Request) {
 		if err == nil && player != nil {
 			pos, _ := h.matchRepo.GetNextPosition(r.Context(), player.MatchID)
 			h.matchRepo.UpdatePlayerStatus(r.Context(), player.ID, domain.MatchPlayerStatusAccepted, &pos) //nolint:errcheck
+			h.log().Info("payment callback accepted match player",
+				append(requestLogFields(r),
+					zap.String("payment_id", updatedPayment.ID),
+					zap.String("match_player_id", player.ID),
+					zap.String("match_id", player.MatchID),
+					zap.Int("position", pos),
+				)...,
+			)
 
 			// Check if match is now full.
 			match, _ := h.matchRepo.FindByID(r.Context(), player.MatchID)
@@ -319,24 +642,52 @@ func (h *PaymentHandler) Callback(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(dto.ZaloPayCallbackResponse{ReturnCode: 1, ReturnMessage: "success"}) //nolint:errcheck
+	h.log().Info("payment callback response sent",
+		append(requestLogFields(r),
+			zap.String("payment_id", updatedPayment.ID),
+			zap.String("app_trans_id", cbData.AppTransID),
+		)...,
+	)
 }
 
 // GET /api/payments/:id
 func (h *PaymentHandler) GetPayment(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
+	h.log().Info("payment detail request received", append(requestLogFields(r), zap.String("payment_id", id))...)
 	payment, err := h.paymentRepo.FindByID(r.Context(), id)
 	if err != nil || payment == nil {
+		fields := append(requestLogFields(r), zap.String("payment_id", id))
+		if err != nil {
+			fields = append(fields, zap.Error(err))
+		}
+		h.log().Warn("payment detail not found", fields...)
 		sendError(w, "Payment not found", "NOT_FOUND", 404)
 		return
 	}
 	sendSuccess(w, mapPaymentToDTO(payment), 200)
+	h.log().Info("payment detail response sent",
+		append(requestLogFields(r),
+			zap.String("payment_id", payment.ID),
+			zap.Stringp("booking_id", payment.BookingID),
+			zap.Stringp("match_player_id", payment.MatchPlayerID),
+			zap.String("payment_type", string(payment.PaymentType)),
+			zap.String("payment_status", string(payment.Status)),
+			zap.Int("amount", payment.Amount),
+		)...,
+	)
 }
 
 // GET /api/payments/:id/status
 func (h *PaymentHandler) GetPaymentStatus(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
+	h.log().Info("payment status request received", append(requestLogFields(r), zap.String("payment_id", id))...)
 	payment, err := h.paymentRepo.FindByID(r.Context(), id)
 	if err != nil || payment == nil {
+		fields := append(requestLogFields(r), zap.String("payment_id", id))
+		if err != nil {
+			fields = append(fields, zap.Error(err))
+		}
+		h.log().Warn("payment status not found", fields...)
 		sendError(w, "Payment not found", "NOT_FOUND", 404)
 		return
 	}
@@ -353,13 +704,28 @@ func (h *PaymentHandler) GetPaymentStatus(w http.ResponseWriter, r *http.Request
 		Payment:   mapPaymentToDTO(payment),
 		IsExpired: isExpired,
 	}, 200)
+	h.log().Info("payment status response sent",
+		append(requestLogFields(r),
+			zap.String("payment_id", payment.ID),
+			zap.Stringp("booking_id", payment.BookingID),
+			zap.Stringp("match_player_id", payment.MatchPlayerID),
+			zap.String("payment_status", string(payment.Status)),
+			zap.Bool("is_expired", isExpired),
+		)...,
+	)
 }
 
 // POST /api/payments/:id/cancel
 func (h *PaymentHandler) CancelPayment(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
+	h.log().Info("payment cancel request received", append(requestLogFields(r), zap.String("payment_id", id))...)
 	payment, err := h.paymentRepo.FindByID(r.Context(), id)
 	if err != nil || payment == nil {
+		fields := append(requestLogFields(r), zap.String("payment_id", id))
+		if err != nil {
+			fields = append(fields, zap.Error(err))
+		}
+		h.log().Warn("payment cancel payment not found", fields...)
 		sendError(w, "Payment not found", "NOT_FOUND", 404)
 		return
 	}
@@ -367,24 +733,47 @@ func (h *PaymentHandler) CancelPayment(w http.ResponseWriter, r *http.Request) {
 	if payment.Status != domain.PaymentStatusPending {
 		// Already settled - just return ok.
 		sendSuccess(w, mapPaymentToDTO(payment), 200)
+		h.log().Info("payment cancel ignored non-pending payment",
+			append(requestLogFields(r),
+				zap.String("payment_id", payment.ID),
+				zap.String("payment_status", string(payment.Status)),
+			)...,
+		)
 		return
 	}
 
 	// Update payment status to failed.
-	h.paymentRepo.UpdateStatus(r.Context(), id, domain.PaymentStatusFailed, nil, nil) //nolint:errcheck
+	if err := h.paymentRepo.UpdateStatus(r.Context(), id, domain.PaymentStatusFailed, nil, nil); err != nil {
+		h.log().Warn("payment cancel status update failed",
+			append(requestLogFields(r),
+				zap.String("payment_id", id),
+				zap.Error(err),
+			)...,
+		)
+	}
 
 	// Update booking status to cancelled and release locks.
 	if payment.BookingID != nil {
 		booking, err := h.availRepo.GetBookingByID(r.Context(), *payment.BookingID)
 		if err == nil && booking != nil {
 			h.availRepo.UpdateBookingStatus(r.Context(), *payment.BookingID, "cancelled") //nolint:errcheck
-			h.redis.ReleaseSlotLocks(r.Context(), []service.SlotLockSpec{{
+			h.releaseSlotLocks(r.Context(), []service.SlotLockSpec{{
 				SubCourtID: booking.SubCourtID,
 				Date:       booking.Date,
 				StartTime:  booking.StartTime,
 				EndTime:    booking.EndTime,
 				BookingID:  *payment.BookingID,
 			}})
+			h.log().Info("payment cancel cancelled booking",
+				append(requestLogFields(r),
+					zap.String("payment_id", payment.ID),
+					zap.String("booking_id", *payment.BookingID),
+					zap.String("sub_court_id", booking.SubCourtID),
+					zap.String("date", booking.Date),
+					zap.String("start_time", booking.StartTime),
+					zap.String("end_time", booking.EndTime),
+				)...,
+			)
 		}
 	}
 
@@ -403,6 +792,14 @@ func (h *PaymentHandler) CancelPayment(w http.ResponseWriter, r *http.Request) {
 		refreshed = payment
 	}
 	sendSuccess(w, mapPaymentToDTO(refreshed), 200)
+	h.log().Info("payment cancel response sent",
+		append(requestLogFields(r),
+			zap.String("payment_id", refreshed.ID),
+			zap.String("payment_status", string(refreshed.Status)),
+			zap.Stringp("booking_id", refreshed.BookingID),
+			zap.Stringp("match_player_id", refreshed.MatchPlayerID),
+		)...,
+	)
 }
 
 // POST /api/matches/:matchId/payment - Create payment for match join.
@@ -609,14 +1006,30 @@ func (h *PaymentHandler) CancelPaymentByID(ctx context.Context, paymentID string
 // GET /api/bookings/:id/payment — returns the latest payment for a booking
 func (h *PaymentHandler) GetBookingPayment(w http.ResponseWriter, r *http.Request) {
 	bookingID := chi.URLParam(r, "id")
+	h.log().Info("booking payment lookup request received", append(requestLogFields(r), zap.String("booking_id", bookingID))...)
 	p, err := h.paymentRepo.FindLatestPendingByBookingID(r.Context(), bookingID)
 	if err != nil {
+		h.log().Error("booking payment lookup failed",
+			append(requestLogFields(r),
+				zap.String("booking_id", bookingID),
+				zap.Error(err),
+			)...,
+		)
 		sendError(w, "Failed to get payment", "INTERNAL_ERROR", 500)
 		return
 	}
 	if p == nil {
+		h.log().Info("booking payment lookup no pending payment", append(requestLogFields(r), zap.String("booking_id", bookingID))...)
 		sendError(w, "No payment found for this booking", "NOT_FOUND", 404)
 		return
 	}
 	sendSuccess(w, mapPaymentToDTO(p), 200)
+	h.log().Info("booking payment lookup response sent",
+		append(requestLogFields(r),
+			zap.String("booking_id", bookingID),
+			zap.String("payment_id", p.ID),
+			zap.String("payment_status", string(p.Status)),
+			zap.Int("amount", p.Amount),
+		)...,
+	)
 }

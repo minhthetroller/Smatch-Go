@@ -123,7 +123,7 @@ func main() {
 	hub := ws.NewHub(logger)
 
 	// ── Scheduler ───────────────────────────────────────────────────────────
-	scheduler := service.NewSchedulerService(logger, availRepo, paymentRepo, matchRepo, hub, cfg.SlotLockTTLSec)
+	scheduler := service.NewSchedulerService(logger, availRepo, paymentRepo, matchRepo, hub, zaloClient, redisSvc, cfg.SlotLockTTLSec)
 	scheduler.Start()
 	defer scheduler.Stop()
 
@@ -133,9 +133,9 @@ func main() {
 	// ── Handlers ────────────────────────────────────────────────────────────
 	authH := handler.NewAuthHandler(fbClient, userRepo, availRepo)
 	courtH := handler.NewCourtHandler(courtRepo)
-	availH := handler.NewAvailabilityHandler(availSvc)
+	availH := handler.NewAvailabilityHandler(availSvc, logger)
 	matchH := handler.NewMatchHandler(matchRepo, redisSvc, hub)
-	paymentH := handler.NewPaymentHandler(paymentRepo, availRepo, matchRepo, redisSvc, zaloClient, hub,
+	paymentH := handler.NewPaymentHandler(paymentRepo, availRepo, matchRepo, redisSvc, zaloClient, hub, logger,
 		cfg.SlotLockTTLSec, cfg.Port, cfg.NodeEnv)
 	searchH := handler.NewSearchHandler(redisSvc, searchRepo, courtRepo)
 	proxyH := handler.NewProxyHandler(cfg.TileServerURL, cfg.TileLayerID)
@@ -217,18 +217,18 @@ func main() {
 
 		// ── Bookings ──────────────────────────────────────────────────────
 		r.Route("/bookings", func(r chi.Router) {
-			r.With(authMw.RequireRegisteredUser).Post("/", availH.CreateBooking)
+			r.With(authMw.OptionalAuth).Post("/", availH.CreateBooking)
 			r.With(authMw.RequireAuth).Get("/{id}", availH.GetBooking)
 			r.With(authMw.RequireAuth).Delete("/{id}", availH.CancelBooking)
-			r.With(authMw.RequireAuth).Get("/{id}/payment", paymentH.GetBookingPayment)
+			r.With(authMw.OptionalAuth).Get("/{id}/payment", paymentH.GetBookingPayment)
 		})
 
 		// ── Payments ──────────────────────────────────────────────────────
 		r.Route("/payments", func(r chi.Router) {
-			r.With(authMw.RequireAuth).Post("/create", paymentH.CreatePayment)
+			r.With(authMw.OptionalAuth).Post("/create", paymentH.CreatePayment)
 			r.With(httprate.LimitByIP(10, time.Minute)).Post("/callback", paymentH.Callback)
 			r.With(authMw.RequireAuth).Get("/{id}", paymentH.GetPayment)
-			r.With(authMw.RequireAuth).Get("/{id}/status", paymentH.GetPaymentStatus)
+			r.With(authMw.OptionalAuth).Get("/{id}/status", paymentH.GetPaymentStatus)
 			r.With(authMw.RequireAuth).Post("/{id}/cancel", paymentH.CancelPayment)
 		})
 

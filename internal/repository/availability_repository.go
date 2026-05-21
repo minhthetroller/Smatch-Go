@@ -21,6 +21,7 @@ type RawSubCourt struct {
 type RawBooking struct {
 	ID         string
 	SubCourtID string
+	Date       string
 	StartTime  string
 	EndTime    string
 	Status     string
@@ -300,6 +301,7 @@ func (r *AvailabilityRepository) GetBookingByID(ctx context.Context, id string) 
 func (r *AvailabilityRepository) GetBookingsByGroupID(ctx context.Context, groupID string) ([]*RawBooking, error) {
 	rows, err := r.db.Query(ctx, `
 		SELECT b.id, b.sub_court_id,
+		       TO_CHAR(b.date, 'YYYY-MM-DD'),
 		       TO_CHAR(b.start_time, 'HH24:MI'), TO_CHAR(b.end_time, 'HH24:MI'),
 		       b.status
 		FROM bookings b
@@ -313,7 +315,7 @@ func (r *AvailabilityRepository) GetBookingsByGroupID(ctx context.Context, group
 	var result []*RawBooking
 	for rows.Next() {
 		b := &RawBooking{}
-		if err := rows.Scan(&b.ID, &b.SubCourtID, &b.StartTime, &b.EndTime, &b.Status); err != nil {
+		if err := rows.Scan(&b.ID, &b.SubCourtID, &b.Date, &b.StartTime, &b.EndTime, &b.Status); err != nil {
 			return nil, err
 		}
 		result = append(result, b)

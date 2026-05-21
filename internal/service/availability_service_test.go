@@ -1,11 +1,65 @@
 package service
 
 import (
+	"context"
 	"testing"
 
+	"github.com/smatch/badminton-backend/internal/domain"
 	"github.com/smatch/badminton-backend/internal/dto"
 	"github.com/smatch/badminton-backend/internal/repository"
 )
+
+type fakeAvailabilityRepository struct {
+	subCourt *repository.RawSubCourt
+}
+
+func (f fakeAvailabilityRepository) GetSubCourtsByCourtID(context.Context, string) ([]*repository.RawSubCourt, error) {
+	return nil, nil
+}
+
+func (f fakeAvailabilityRepository) GetBookingsByCourtAndDate(context.Context, string, string) ([]*repository.RawBooking, error) {
+	return nil, nil
+}
+
+func (f fakeAvailabilityRepository) GetPricingRulesByCourtID(context.Context, string) ([]*repository.RawPricingRule, error) {
+	return nil, nil
+}
+
+func (f fakeAvailabilityRepository) GetClosuresByCourtAndDate(context.Context, string, string) ([]*repository.RawClosure, error) {
+	return nil, nil
+}
+
+func (f fakeAvailabilityRepository) IsHoliday(context.Context, string) (bool, error) {
+	return false, nil
+}
+
+func (f fakeAvailabilityRepository) GetHolidayMultiplier(context.Context, string) (float64, error) {
+	return 1.0, nil
+}
+
+func (f fakeAvailabilityRepository) GetSubCourtWithCourt(context.Context, string) (*repository.RawSubCourt, error) {
+	return f.subCourt, nil
+}
+
+func (f fakeAvailabilityRepository) HasOverlappingBooking(context.Context, string, string, string, string) (bool, error) {
+	return false, nil
+}
+
+func (f fakeAvailabilityRepository) CreateBookings(context.Context, []repository.CreateBookingItem, repository.CreateBookingCommon) ([]string, error) {
+	return nil, nil
+}
+
+func (f fakeAvailabilityRepository) GetBookingByID(context.Context, string) (*repository.BookingRow, error) {
+	return nil, nil
+}
+
+func (f fakeAvailabilityRepository) UpdateBookingStatus(context.Context, string, string) error {
+	return nil
+}
+
+func (f fakeAvailabilityRepository) GetUserBookings(context.Context, string, int, int) ([]*repository.BookingRow, int, error) {
+	return nil, 0, nil
+}
 
 func TestGenerateTimeSlots_Empty(t *testing.T) {
 	slots := generateTimeSlots("06:00", "08:00", nil, nil, nil, "weekday", 1.0)
@@ -33,6 +87,77 @@ func TestGenerateTimeSlots_Empty(t *testing.T) {
 		if slots[i].Price != 0 {
 			t.Errorf("slot %d: price = %d, want 0", i, slots[i].Price)
 		}
+	}
+}
+
+func TestCreateBooking_InvalidSingleSubCourtIDReturnsBadRequest(t *testing.T) {
+	svc := &AvailabilityService{}
+	req := &dto.CreateBookingRequest{
+		SubCourtID: "subcourt-1",
+		Date:       "2026-05-20",
+		StartTime:  "09:00",
+		EndTime:    "10:00",
+		GuestName:  "Guest",
+		GuestPhone: "0900000000",
+	}
+
+	_, err := svc.CreateBooking(context.Background(), req, "user-1")
+
+	appErr, ok := err.(*domain.AppError)
+	if !ok {
+		t.Fatalf("err = %T, want *domain.AppError", err)
+	}
+	if appErr.Code != "BAD_REQUEST" || appErr.Status != 400 {
+		t.Fatalf("appErr = %+v, want BAD_REQUEST 400", appErr)
+	}
+	if appErr.Message != "Invalid subCourtId: must be a UUID" {
+		t.Fatalf("message = %q, want invalid subCourtId message", appErr.Message)
+	}
+}
+
+func TestCreateBooking_InvalidMultiSubCourtIDReturnsBadRequest(t *testing.T) {
+	svc := &AvailabilityService{}
+	req := &dto.CreateBookingRequest{
+		Bookings: []dto.SingleBookingItem{{
+			SubCourtID: "subcourt-1",
+			Date:       "2026-05-20",
+			StartTime:  "09:00",
+			EndTime:    "10:00",
+		}},
+		GuestName:  "Guest",
+		GuestPhone: "0900000000",
+	}
+
+	_, err := svc.CreateBooking(context.Background(), req, "")
+
+	appErr, ok := err.(*domain.AppError)
+	if !ok {
+		t.Fatalf("err = %T, want *domain.AppError", err)
+	}
+	if appErr.Code != "BAD_REQUEST" || appErr.Status != 400 {
+		t.Fatalf("appErr = %+v, want BAD_REQUEST 400", appErr)
+	}
+}
+
+func TestCreateBooking_ValidMissingSubCourtReturnsNotFound(t *testing.T) {
+	svc := &AvailabilityService{availRepo: fakeAvailabilityRepository{}}
+	req := &dto.CreateBookingRequest{
+		SubCourtID: "11111111-1111-1111-1111-111111111111",
+		Date:       "2026-05-20",
+		StartTime:  "09:00",
+		EndTime:    "10:00",
+		GuestName:  "Guest",
+		GuestPhone: "0900000000",
+	}
+
+	_, err := svc.CreateBooking(context.Background(), req, "")
+
+	appErr, ok := err.(*domain.AppError)
+	if !ok {
+		t.Fatalf("err = %T, want *domain.AppError", err)
+	}
+	if appErr.Code != "NOT_FOUND" || appErr.Status != 404 {
+		t.Fatalf("appErr = %+v, want NOT_FOUND 404", appErr)
 	}
 }
 
