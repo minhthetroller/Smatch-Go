@@ -114,6 +114,12 @@ func (h *Hub) ServePayments(w http.ResponseWriter, r *http.Request) {
 
 	_ = conn.WriteJSON(map[string]string{"type": "connected", "message": "Connected to payment notification service"})
 
+	// Auto-subscribe if paymentId is provided in query params.
+	if paymentID := r.URL.Query().Get("paymentId"); paymentID != "" {
+		h.subscribePayment(paymentID, conn)
+		_ = conn.WriteJSON(map[string]interface{}{"type": "subscribed", "paymentId": paymentID})
+	}
+
 	for {
 		_, msg, err := conn.ReadMessage()
 		if err != nil {

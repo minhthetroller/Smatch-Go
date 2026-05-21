@@ -178,24 +178,24 @@ func TestSplitHours(t *testing.T) {
 }
 
 func TestOhForDay(t *testing.T) {
-	mon := "06:00-22:00"
-	sat := "08:00-20:00"
+	weekdayStr := "06:00-22:00"
+	weekendStr := "08:00-20:00"
 	oh := &OpeningHours{
-		Mon: &mon,
-		Sat: &sat,
+		Weekdays: &DayRange{Open: "06:00", Close: "22:00"},
+		Weekends: &DayRange{Open: "08:00", Close: "20:00"},
 	}
 
 	tests := []struct {
 		day  string
 		want *string
 	}{
-		{"mon", &mon},
-		{"tue", nil},
-		{"wed", nil},
-		{"thu", nil},
-		{"fri", nil},
-		{"sat", &sat},
-		{"sun", nil},
+		{"mon", &weekdayStr},
+		{"tue", &weekdayStr},
+		{"wed", &weekdayStr},
+		{"thu", &weekdayStr},
+		{"fri", &weekdayStr},
+		{"sat", &weekendStr},
+		{"sun", &weekendStr},
 		{"invalid", nil},
 	}
 

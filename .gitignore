@@ -55,3 +55,6 @@ terraform.tfplan
 .env.localstack
 .env.*.local
 docker-compose.override.yml
+
+# Node modules
+web/node_modules/

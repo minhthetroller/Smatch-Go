@@ -111,6 +111,34 @@ func (r *PaymentRepository) UpdateStatusByAppTransID(ctx context.Context, appTra
 		appTransID, string(status), zpTransID, []byte(callbackData)))
 }
 
+// FindStalePendingBookingPayments returns pending BOOKING payments older than minAgeSec
+// but not older than maxAgeSec, for reconciliation with ZaloPay.
+func (r *PaymentRepository) FindStalePendingBookingPayments(ctx context.Context, minAgeSec, maxAgeSec int) ([]*domain.Payment, error) {
+	rows, err := r.db.Query(ctx, `
+		SELECT `+paymentCols+`
+		FROM payments
+		WHERE payment_type = 'BOOKING'
+		  AND status = 'pending'
+		  AND created_at < NOW() - ($1 || ' seconds')::interval
+		  AND created_at > NOW() - ($2 || ' seconds')::interval
+		ORDER BY created_at ASC
+	`, strconv.Itoa(minAgeSec), strconv.Itoa(maxAgeSec))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var result []*domain.Payment
+	for rows.Next() {
+		p, err := scanPayment(rows)
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, p)
+	}
+	return result, rows.Err()
+}
+
 // MarkExpiredMatchPayments marks old pending MATCH_JOIN payments as expired.
 func (r *PaymentRepository) MarkExpiredMatchPayments(ctx context.Context, timeoutSec int) ([]string, error) {
 	rows, err := r.db.Query(ctx, `
