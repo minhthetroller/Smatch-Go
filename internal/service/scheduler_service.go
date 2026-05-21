@@ -64,6 +64,25 @@ func (s *SchedulerService) Start() {
 	// Expire pending bookings every 2 minutes
 	s.cron.AddFunc("*/2 * * * *", func() { //nolint:errcheck
 		ctx := context.Background()
+		payments, err := s.paymentRepo.MarkExpiredBookingPayments(ctx, s.timeoutSec)
+		if err != nil {
+			s.logger.Error("mark expired booking payments", zap.Error(err))
+			return
+		}
+		for _, p := range payments {
+			s.cancelBookingPayment(ctx, p)
+			s.hub.NotifyPaymentStatus(ws.PaymentNotification{
+				Type:          "payment_status",
+				PaymentID:     p.ID,
+				Status:        string(domain.PaymentStatusExpired),
+				BookingID:     p.BookingID,
+				MatchPlayerID: p.MatchPlayerID,
+				Message:       "Payment expired. Please try again.",
+			})
+		}
+		if len(payments) > 0 {
+			s.logger.Info("marked booking payments expired", zap.Int("count", len(payments)))
+		}
 		if err := s.availRepo.MarkExpiredPendingBookings(ctx, s.timeoutSec); err != nil {
 			s.logger.Error("mark expired pending bookings", zap.Error(err))
 		}
@@ -72,10 +91,19 @@ func (s *SchedulerService) Start() {
 	// Expire pending match payments every 2 minutes
 	s.cron.AddFunc("*/2 * * * *", func() { //nolint:errcheck
 		ctx := context.Background()
-		playerIDs, err := s.paymentRepo.MarkExpiredMatchPayments(ctx, s.timeoutSec)
+		payments, err := s.paymentRepo.MarkExpiredMatchPayments(ctx, s.timeoutSec)
 		if err != nil {
 			s.logger.Error("mark expired match payments", zap.Error(err))
 			return
+		}
+		if len(payments) == 0 {
+			return
+		}
+		playerIDs := make([]string, 0, len(payments))
+		for _, p := range payments {
+			if p.MatchPlayerID != nil {
+				playerIDs = append(playerIDs, *p.MatchPlayerID)
+			}
 		}
 		if len(playerIDs) == 0 {
 			return
@@ -85,17 +113,17 @@ func (s *SchedulerService) Start() {
 			s.logger.Error("mark expired match players", zap.Error(err))
 		}
 		// Notify via WebSocket
-		for _, pid := range playerIDs {
-			pid := pid
+		for _, p := range payments {
 			s.hub.NotifyPaymentStatus(ws.PaymentNotification{
 				Type:          "payment_status",
-				PaymentID:     pid,
-				Status:        "expired",
-				MatchPlayerID: &pid,
+				PaymentID:     p.ID,
+				Status:        string(domain.PaymentStatusExpired),
+				BookingID:     p.BookingID,
+				MatchPlayerID: p.MatchPlayerID,
 				Message:       "Payment expired. Please try again.",
 			})
 		}
-		s.logger.Info("marked match payments expired", zap.Int("count", len(playerIDs)))
+		s.logger.Info("marked match payments expired", zap.Int("count", len(payments)))
 	})
 
 	// Reconcile stale pending booking payments with ZaloPay every 1 minute
@@ -106,6 +134,60 @@ func (s *SchedulerService) Start() {
 
 	s.cron.Start()
 	s.logger.Info("scheduler started")
+}
+
+func (s *SchedulerService) cancelBookingPayment(ctx context.Context, p *domain.Payment) {
+	if p.BookingID == nil {
+		return
+	}
+	booking, err := s.availRepo.GetBookingByID(ctx, *p.BookingID)
+	if err != nil || booking == nil {
+		if err != nil {
+			s.logger.Warn("expire booking payment: booking lookup failed",
+				zap.String("payment_id", p.ID),
+				zap.String("booking_id", *p.BookingID),
+				zap.Error(err))
+		}
+		return
+	}
+
+	_ = s.availRepo.UpdateBookingStatus(ctx, booking.ID, "cancelled")
+	if s.redis != nil {
+		s.redis.ReleaseSlotLocks(ctx, []SlotLockSpec{{
+			SubCourtID: booking.SubCourtID,
+			Date:       booking.Date,
+			StartTime:  booking.StartTime,
+			EndTime:    booking.EndTime,
+			BookingID:  booking.ID,
+		}})
+	}
+
+	if booking.GroupID == nil {
+		return
+	}
+	groupBookings, err := s.availRepo.GetBookingsByGroupID(ctx, *booking.GroupID)
+	if err != nil {
+		s.logger.Warn("expire booking payment: group bookings lookup failed",
+			zap.String("payment_id", p.ID),
+			zap.String("group_id", *booking.GroupID),
+			zap.Error(err))
+		return
+	}
+	for _, gb := range groupBookings {
+		if gb.ID == booking.ID {
+			continue
+		}
+		_ = s.availRepo.UpdateBookingStatus(ctx, gb.ID, "cancelled")
+		if s.redis != nil {
+			s.redis.ReleaseSlotLocks(ctx, []SlotLockSpec{{
+				SubCourtID: gb.SubCourtID,
+				Date:       gb.Date,
+				StartTime:  gb.StartTime,
+				EndTime:    gb.EndTime,
+				BookingID:  gb.ID,
+			}})
+		}
+	}
 }
 
 // reconcilePayments queries ZaloPay for stale pending BOOKING payments
@@ -149,11 +231,14 @@ func (s *SchedulerService) reconcilePayments(ctx context.Context) {
 		case 1: // success
 			zpTransID := fmt.Sprintf("%d", resp.ZPTransID)
 			rawData, _ := json.Marshal(resp)
+
+			// update the payment status in the database
+			// this is working right now but need to upgrade to transaction to ensure the integrity of data
 			updated, err := s.paymentRepo.UpdateStatusByAppTransID(
 				ctx, p.AppTransID,
 				domain.PaymentStatusSuccess,
 				&zpTransID,
-				json.RawMessage(rawData),
+				rawData,
 			)
 			if err != nil || updated == nil {
 				s.logger.Error("reconcile: update payment status failed",
@@ -162,6 +247,7 @@ func (s *SchedulerService) reconcilePayments(ctx context.Context) {
 			}
 
 			// Confirm booking if linked
+			// This block is messy with chained if statement, it needs to be cleaned up
 			if updated.BookingID != nil {
 				booking, err := s.availRepo.GetBookingByID(ctx, *updated.BookingID)
 				if err == nil && booking != nil {
@@ -179,6 +265,7 @@ func (s *SchedulerService) reconcilePayments(ctx context.Context) {
 					}
 
 					// Release group booking locks if any
+					// Chained if conditions this will need to be fixed soon
 					if booking.GroupID != nil {
 						groupBookings, err := s.availRepo.GetBookingsByGroupID(ctx, *booking.GroupID)
 						if err == nil {
@@ -202,7 +289,7 @@ func (s *SchedulerService) reconcilePayments(ctx context.Context) {
 			}
 
 			s.hub.NotifyPaymentStatus(ws.PaymentNotification{
-				Type:      "payment_success",
+				Type:      "payment_status",
 				PaymentID: updated.ID,
 				Status:    string(domain.PaymentStatusSuccess),
 				BookingID: updated.BookingID,

@@ -12,6 +12,7 @@ import (
 
 	"github.com/smatch/badminton-backend/internal/domain"
 	"github.com/smatch/badminton-backend/internal/repository"
+	"github.com/smatch/badminton-backend/internal/service"
 	zalopay "github.com/smatch/badminton-backend/platform/zalopay"
 )
 
@@ -20,6 +21,7 @@ type fakePaymentStore struct {
 	findByID      *domain.Payment
 	createErr     error
 	updateOrderID string
+	updateStatus  domain.PaymentStatus
 }
 
 func (f *fakePaymentStore) FindByID(context.Context, string) (*domain.Payment, error) {
@@ -55,7 +57,8 @@ func (f *fakePaymentStore) UpdateOrderURL(_ context.Context, id, _ string, _ str
 	return nil
 }
 
-func (f *fakePaymentStore) UpdateStatus(context.Context, string, domain.PaymentStatus, *string, json.RawMessage) error {
+func (f *fakePaymentStore) UpdateStatus(_ context.Context, _ string, status domain.PaymentStatus, _ *string, _ json.RawMessage) error {
+	f.updateStatus = status
 	return nil
 }
 
@@ -66,6 +69,24 @@ func (f *fakePaymentStore) UpdateStatusByAppTransID(context.Context, string, dom
 type fakeAvailabilityStore struct {
 	booking *repository.BookingRow
 	group   []*repository.RawBooking
+}
+
+type fakePaymentRedis struct {
+	ticket string
+	err    error
+}
+
+func (f fakePaymentRedis) AcquireSlotLocks(context.Context, []service.SlotLockSpec) (bool, error) {
+	return true, nil
+}
+
+func (fakePaymentRedis) ReleaseSlotLocks(context.Context, []service.SlotLockSpec) {}
+
+func (f fakePaymentRedis) CreatePaymentWSTicket(context.Context, string, time.Duration) (string, error) {
+	if f.err != nil {
+		return "", f.err
+	}
+	return f.ticket, nil
 }
 
 func (f fakeAvailabilityStore) GetBookingByID(context.Context, string) (*repository.BookingRow, error) {
@@ -129,7 +150,7 @@ func (fakePaymentGateway) VerifyCallback(string, string) (*zalopay.CallbackData,
 	return nil, false
 }
 
-func TestCreatePayment_AllowsNilRedis(t *testing.T) {
+func TestCreatePayment_ReturnsWebSocketTicketURL(t *testing.T) {
 	bookingID := "12345678-1234-1234-1234-123456789abc"
 	orderURL := "https://example.test/pay"
 	zpToken := "zp-token"
@@ -162,10 +183,12 @@ func TestCreatePayment_AllowsNilRedis(t *testing.T) {
 			TotalPrice: 120000,
 			Status:     "pending",
 		}},
-		matchRepo:   fakeMatchPaymentStore{},
-		zalopay:     fakePaymentGateway{},
-		slotLockTTL: 900,
-		port:        3000,
+		matchRepo:          fakeMatchPaymentStore{},
+		redis:              fakePaymentRedis{ticket: "ticket-1"},
+		zalopay:            fakePaymentGateway{},
+		slotLockTTL:        900,
+		paymentWSTicketTTL: 60,
+		port:               3000,
 	}
 
 	rec := httptest.NewRecorder()
@@ -179,9 +202,21 @@ func TestCreatePayment_AllowsNilRedis(t *testing.T) {
 	if paymentStore.updateOrderID != "payment-1" {
 		t.Fatalf("UpdateOrderURL id = %q, want payment-1", paymentStore.updateOrderID)
 	}
+	var env struct {
+		Success bool `json:"success"`
+		Data    struct {
+			WsSubscribeURL string `json:"wsSubscribeUrl"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &env); err != nil {
+		t.Fatalf("response json: %v", err)
+	}
+	if env.Data.WsSubscribeURL != "ws://example.com/ws/payments?paymentId=payment-1&ticket=ticket-1" {
+		t.Fatalf("wsSubscribeUrl = %q", env.Data.WsSubscribeURL)
+	}
 }
 
-func TestCreatePayment_GatewayFailureWithNilRedisDoesNotPanic(t *testing.T) {
+func TestCreatePayment_GatewayFailureDoesNotPanic(t *testing.T) {
 	bookingID := "12345678-1234-1234-1234-123456789abc"
 	h := &PaymentHandler{
 		paymentRepo: &fakePaymentStore{},
@@ -197,10 +232,12 @@ func TestCreatePayment_GatewayFailureWithNilRedisDoesNotPanic(t *testing.T) {
 			TotalPrice: 120000,
 			Status:     "pending",
 		}},
-		matchRepo:   fakeMatchPaymentStore{},
-		zalopay:     fakePaymentGateway{createErr: errors.New("gateway down")},
-		slotLockTTL: 900,
-		port:        3000,
+		matchRepo:          fakeMatchPaymentStore{},
+		redis:              fakePaymentRedis{ticket: "ticket-1"},
+		zalopay:            fakePaymentGateway{createErr: errors.New("gateway down")},
+		slotLockTTL:        900,
+		paymentWSTicketTTL: 60,
+		port:               3000,
 	}
 
 	rec := httptest.NewRecorder()

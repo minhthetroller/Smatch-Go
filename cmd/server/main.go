@@ -136,7 +136,7 @@ func main() {
 	availH := handler.NewAvailabilityHandler(availSvc, logger)
 	matchH := handler.NewMatchHandler(matchRepo, redisSvc, hub)
 	paymentH := handler.NewPaymentHandler(paymentRepo, availRepo, matchRepo, redisSvc, zaloClient, hub, logger,
-		cfg.SlotLockTTLSec, cfg.Port, cfg.NodeEnv)
+		cfg.SlotLockTTLSec, cfg.PaymentWSTicketTTLSec, cfg.Port, cfg.NodeEnv)
 	searchH := handler.NewSearchHandler(redisSvc, searchRepo, courtRepo)
 	proxyH := handler.NewProxyHandler(cfg.TileServerURL, cfg.TileLayerID)
 	wsH := handler.NewWebSocketHandler(hub)
@@ -148,6 +148,13 @@ func main() {
 	uploadH := handler.NewUploadHandler(uploadSvc)
 
 	// ── Wire payment auto-cancel on WS disconnect ────────────────────────────
+	hub.ValidatePaymentTicket = func(ctx context.Context, paymentID, ticket string) (bool, error) {
+		if redisSvc == nil {
+			return false, nil
+		}
+		return redisSvc.ConsumePaymentWSTicket(ctx, paymentID, ticket)
+	}
+	hub.PaymentStatusSnapshot = paymentH.PaymentStatusNotification
 	hub.OnPaymentDisconnect = func(paymentID string) {
 		bgCtx := context.Background()
 		paymentH.CancelPaymentByID(bgCtx, paymentID)
@@ -228,7 +235,6 @@ func main() {
 			r.With(authMw.OptionalAuth).Post("/create", paymentH.CreatePayment)
 			r.With(httprate.LimitByIP(10, time.Minute)).Post("/callback", paymentH.Callback)
 			r.With(authMw.RequireAuth).Get("/{id}", paymentH.GetPayment)
-			r.With(authMw.OptionalAuth).Get("/{id}/status", paymentH.GetPaymentStatus)
 			r.With(authMw.RequireAuth).Post("/{id}/cancel", paymentH.CancelPayment)
 		})
 

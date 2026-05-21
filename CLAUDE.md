@@ -80,6 +80,7 @@ Copy `.env.example` → `.env`. Key vars:
 - **Logging**: `go.uber.org/zap` logger passed via dependency injection. Use structured fields, not `fmt.Sprintf`.
 - **Config**: never read `os.Getenv` outside `internal/config/config.go`.
 - **Migrations**: always create both `.up.sql` and `.down.sql`. Sequential numbering: `000003_...`.
+- **Dead code**: when removing or replacing behavior, also remove deprecated routes, methods, unused helpers, dead code, and stale tests in the same change. Do not leave compatibility shims unless explicitly requested.
 
 ## Testing
 

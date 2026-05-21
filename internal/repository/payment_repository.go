@@ -139,30 +139,54 @@ func (r *PaymentRepository) FindStalePendingBookingPayments(ctx context.Context,
 	return result, rows.Err()
 }
 
+// MarkExpiredBookingPayments marks old pending BOOKING payments as expired.
+func (r *PaymentRepository) MarkExpiredBookingPayments(ctx context.Context, timeoutSec int) ([]*domain.Payment, error) {
+	rows, err := r.db.Query(ctx, `
+		UPDATE payments
+		SET status = 'expired', updated_at = NOW()
+		WHERE payment_type = 'BOOKING'
+		  AND status = 'pending'
+		  AND created_at < NOW() - ($1 || ' seconds')::interval
+		RETURNING `+paymentCols,
+		strconv.Itoa(timeoutSec))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var result []*domain.Payment
+	for rows.Next() {
+		p, err := scanPayment(rows)
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, p)
+	}
+	return result, rows.Err()
+}
+
 // MarkExpiredMatchPayments marks old pending MATCH_JOIN payments as expired.
-func (r *PaymentRepository) MarkExpiredMatchPayments(ctx context.Context, timeoutSec int) ([]string, error) {
+func (r *PaymentRepository) MarkExpiredMatchPayments(ctx context.Context, timeoutSec int) ([]*domain.Payment, error) {
 	rows, err := r.db.Query(ctx, `
 		UPDATE payments
 		SET status = 'expired', updated_at = NOW()
 		WHERE payment_type = 'MATCH_JOIN'
 		  AND status = 'pending'
 		  AND created_at < NOW() - ($1 || ' seconds')::interval
-		RETURNING match_player_id::text
-	`, strconv.Itoa(timeoutSec))
+		RETURNING `+paymentCols,
+		strconv.Itoa(timeoutSec))
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	var playerIDs []string
+	var result []*domain.Payment
 	for rows.Next() {
-		var id *string
-		if err := rows.Scan(&id); err != nil {
+		p, err := scanPayment(rows)
+		if err != nil {
 			return nil, err
 		}
-		if id != nil {
-			playerIDs = append(playerIDs, *id)
-		}
+		result = append(result, p)
 	}
-	return playerIDs, rows.Err()
+	return result, rows.Err()
 }
