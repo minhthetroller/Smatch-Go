@@ -111,7 +111,7 @@ func (s *SchedulerService) Start() {
 // reconcilePayments queries ZaloPay for stale pending BOOKING payments
 // and updates their status if the payment has already succeeded.
 func (s *SchedulerService) reconcilePayments(ctx context.Context) {
-	minAgeSec := 60   // give callback 1 min to arrive
+	minAgeSec := 60 // give callback 1 min to arrive
 	maxAgeSec := s.timeoutSec
 
 	payments, err := s.paymentRepo.FindStalePendingBookingPayments(ctx, minAgeSec, maxAgeSec)
