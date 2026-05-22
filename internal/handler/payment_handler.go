@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -22,16 +23,17 @@ import (
 )
 
 type PaymentHandler struct {
-	paymentRepo paymentStore
-	availRepo   availabilityStore
-	matchRepo   matchPaymentStore
-	redis       *service.RedisService
-	zalopay     paymentGateway
-	hub         *ws.Hub
-	logger      *zap.Logger
-	slotLockTTL int
-	port        int
-	nodeEnv     string
+	paymentRepo        paymentStore
+	availRepo          availabilityStore
+	matchRepo          matchPaymentStore
+	redis              paymentRedis
+	zalopay            paymentGateway
+	hub                *ws.Hub
+	logger             *zap.Logger
+	slotLockTTL        int
+	paymentWSTicketTTL int
+	port               int
+	nodeEnv            string
 }
 
 type paymentStore interface {
@@ -59,6 +61,12 @@ type matchPaymentStore interface {
 	UpdateStatus(ctx context.Context, id string, status domain.MatchStatus) error
 }
 
+type paymentRedis interface {
+	AcquireSlotLocks(ctx context.Context, slots []service.SlotLockSpec) (bool, error)
+	ReleaseSlotLocks(ctx context.Context, slots []service.SlotLockSpec)
+	CreatePaymentWSTicket(ctx context.Context, paymentID string, ttl time.Duration) (string, error)
+}
+
 type paymentGateway interface {
 	GenerateAppTransID(bookingID string) string
 	CreateOrder(bookingID, appTransID, description, guestName, guestPhone string, amount int, embedData zalopay.EmbedData) (*zalopay.CreateOrderResponse, error)
@@ -73,23 +81,28 @@ func NewPaymentHandler(
 	zp *zalopay.Client,
 	hub *ws.Hub,
 	logger *zap.Logger,
-	slotLockTTL, port int,
+	slotLockTTL, paymentWSTicketTTL, port int,
 	nodeEnv string,
 ) *PaymentHandler {
 	if logger == nil {
 		logger = zap.NewNop()
 	}
+	var redis paymentRedis
+	if rs != nil {
+		redis = rs
+	}
 	return &PaymentHandler{
-		paymentRepo: pr,
-		availRepo:   ar,
-		matchRepo:   mr,
-		redis:       rs,
-		zalopay:     zp,
-		hub:         hub,
-		logger:      logger,
-		slotLockTTL: slotLockTTL,
-		port:        port,
-		nodeEnv:     nodeEnv,
+		paymentRepo:        pr,
+		availRepo:          ar,
+		matchRepo:          mr,
+		redis:              redis,
+		zalopay:            zp,
+		hub:                hub,
+		logger:             logger,
+		slotLockTTL:        slotLockTTL,
+		paymentWSTicketTTL: paymentWSTicketTTL,
+		port:               port,
+		nodeEnv:            nodeEnv,
 	}
 }
 
@@ -139,7 +152,33 @@ func (h *PaymentHandler) releaseSlotLocks(ctx context.Context, slots []service.S
 	h.redis.ReleaseSlotLocks(ctx, slots)
 }
 
-// POST /api/payments/create
+func (h *PaymentHandler) createPaymentWSTicket(ctx context.Context, paymentID string) (string, error) {
+	if h.redis == nil {
+		return "", fmt.Errorf("redis unavailable for payment websocket ticket")
+	}
+	ttl := h.paymentWSTicketTTL
+	if ttl <= 0 {
+		ttl = 60
+	}
+	return h.redis.CreatePaymentWSTicket(ctx, paymentID, time.Duration(ttl)*time.Second)
+}
+
+func (h *PaymentHandler) failPaymentWSTicket(w http.ResponseWriter, r *http.Request, paymentID string, slots []service.SlotLockSpec, err error) {
+	if paymentID != "" {
+		if updateErr := h.paymentRepo.UpdateStatus(r.Context(), paymentID, domain.PaymentStatusFailed, nil, nil); updateErr != nil {
+			h.log().Warn("payment websocket ticket status update failed",
+				append(requestLogFields(r), zap.String("payment_id", paymentID), zap.Error(updateErr))...,
+			)
+		}
+	}
+	h.releaseSlotLocks(r.Context(), slots)
+	h.log().Error("payment websocket ticket creation failed",
+		append(requestLogFields(r), zap.String("payment_id", paymentID), zap.Error(err))...,
+	)
+	sendError(w, "Payment notification channel unavailable. Please try again.", "PAYMENT_WS_TICKET_ERROR", http.StatusServiceUnavailable)
+}
+
+// CreatePayment POST /api/payments/create
 func (h *PaymentHandler) CreatePayment(w http.ResponseWriter, r *http.Request) {
 	_ = middleware.UserFromContext(r.Context()) // auth enforced by middleware; user context not needed here
 
@@ -248,7 +287,12 @@ func (h *PaymentHandler) CreatePayment(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		expireAt := existingPayment.CreatedAt.Add(time.Duration(h.slotLockTTL) * time.Second).Format("2006-01-02T15:04:05.000Z")
-		wsURL := h.buildWSSubscribeURL(existingPayment.ID)
+		ticket, err := h.createPaymentWSTicket(r.Context(), existingPayment.ID)
+		if err != nil {
+			h.failPaymentWSTicket(w, r, "", nil, err)
+			return
+		}
+		wsURL := h.buildWSSubscribeURL(r, existingPayment.ID, ticket)
 		orderURL := ""
 		if existingPayment.OrderURL != nil {
 			orderURL = *existingPayment.OrderURL
@@ -334,6 +378,12 @@ func (h *PaymentHandler) CreatePayment(w http.ResponseWriter, r *http.Request) {
 			zap.Int("amount", booking.TotalPrice),
 		)...,
 	)
+
+	ticket, err := h.createPaymentWSTicket(r.Context(), payment.ID)
+	if err != nil {
+		h.failPaymentWSTicket(w, r, payment.ID, slots, err)
+		return
+	}
 
 	// 6. Call ZaloPay createOrder.
 	embedData := zalopay.EmbedData{BookingID: req.BookingID}
@@ -421,7 +471,7 @@ func (h *PaymentHandler) CreatePayment(w http.ResponseWriter, r *http.Request) {
 	}
 
 	expireAt := payment.CreatedAt.Add(time.Duration(h.slotLockTTL) * time.Second).Format("2006-01-02T15:04:05.000Z")
-	wsURL := h.buildWSSubscribeURL(payment.ID)
+	wsURL := h.buildWSSubscribeURL(r, payment.ID, ticket)
 
 	sendSuccess(w, dto.CreatePaymentResponse{
 		Payment:        mapPaymentToDTO(payment),
@@ -441,7 +491,7 @@ func (h *PaymentHandler) CreatePayment(w http.ResponseWriter, r *http.Request) {
 	)
 }
 
-// POST /api/payments/callback - ZaloPay webhook.
+// Callback POST /api/payments/callback - ZaloPay webhook.
 func (h *PaymentHandler) Callback(w http.ResponseWriter, r *http.Request) {
 	var req dto.ZaloPayCallbackRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -631,7 +681,7 @@ func (h *PaymentHandler) Callback(w http.ResponseWriter, r *http.Request) {
 
 	// 6. Notify WebSocket subscribers.
 	h.hub.NotifyPaymentStatus(ws.PaymentNotification{
-		Type:          "payment_success",
+		Type:          "payment_status",
 		PaymentID:     updatedPayment.ID,
 		Status:        string(domain.PaymentStatusSuccess),
 		BookingID:     updatedPayment.BookingID,
@@ -650,7 +700,7 @@ func (h *PaymentHandler) Callback(w http.ResponseWriter, r *http.Request) {
 	)
 }
 
-// GET /api/payments/:id
+// GetPayment GET /api/payments/:id
 func (h *PaymentHandler) GetPayment(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	h.log().Info("payment detail request received", append(requestLogFields(r), zap.String("payment_id", id))...)
@@ -677,45 +727,23 @@ func (h *PaymentHandler) GetPayment(w http.ResponseWriter, r *http.Request) {
 	)
 }
 
-// GET /api/payments/:id/status
-func (h *PaymentHandler) GetPaymentStatus(w http.ResponseWriter, r *http.Request) {
-	id := chi.URLParam(r, "id")
-	h.log().Info("payment status request received", append(requestLogFields(r), zap.String("payment_id", id))...)
-	payment, err := h.paymentRepo.FindByID(r.Context(), id)
+func (h *PaymentHandler) PaymentStatusNotification(ctx context.Context, paymentID string) (*ws.PaymentNotification, error) {
+	payment, err := h.paymentRepo.FindByID(ctx, paymentID)
 	if err != nil || payment == nil {
-		fields := append(requestLogFields(r), zap.String("payment_id", id))
-		if err != nil {
-			fields = append(fields, zap.Error(err))
-		}
-		h.log().Warn("payment status not found", fields...)
-		sendError(w, "Payment not found", "NOT_FOUND", 404)
-		return
+		return nil, err
 	}
-
-	isExpired := false
-	if payment.Status == domain.PaymentStatusPending {
-		expireAt := payment.CreatedAt.Add(time.Duration(h.slotLockTTL) * time.Second)
-		if time.Now().After(expireAt) {
-			isExpired = true
-		}
-	}
-
-	sendSuccess(w, dto.PaymentStatusResponse{
-		Payment:   mapPaymentToDTO(payment),
-		IsExpired: isExpired,
-	}, 200)
-	h.log().Info("payment status response sent",
-		append(requestLogFields(r),
-			zap.String("payment_id", payment.ID),
-			zap.Stringp("booking_id", payment.BookingID),
-			zap.Stringp("match_player_id", payment.MatchPlayerID),
-			zap.String("payment_status", string(payment.Status)),
-			zap.Bool("is_expired", isExpired),
-		)...,
-	)
+	return &ws.PaymentNotification{
+		Type:          "payment_status",
+		PaymentID:     payment.ID,
+		Status:        string(payment.Status),
+		BookingID:     payment.BookingID,
+		MatchPlayerID: payment.MatchPlayerID,
+		ZPTransID:     payment.ZPTransID,
+		Message:       paymentStatusMessage(payment.Status),
+	}, nil
 }
 
-// POST /api/payments/:id/cancel
+// CancelPayment POST /api/payments/:id/cancel
 func (h *PaymentHandler) CancelPayment(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	h.log().Info("payment cancel request received", append(requestLogFields(r), zap.String("payment_id", id))...)
@@ -779,7 +807,7 @@ func (h *PaymentHandler) CancelPayment(w http.ResponseWriter, r *http.Request) {
 
 	// Notify WebSocket.
 	h.hub.NotifyPaymentStatus(ws.PaymentNotification{
-		Type:          "payment_cancelled",
+		Type:          "payment_status",
 		PaymentID:     payment.ID,
 		Status:        string(domain.PaymentStatusFailed),
 		BookingID:     payment.BookingID,
@@ -802,7 +830,7 @@ func (h *PaymentHandler) CancelPayment(w http.ResponseWriter, r *http.Request) {
 	)
 }
 
-// POST /api/matches/:matchId/payment - Create payment for match join.
+// CreateMatchPayment POST /api/matches/:matchId/payment - Create payment for match join.
 func (h *PaymentHandler) CreateMatchPayment(w http.ResponseWriter, r *http.Request) {
 	matchID := chi.URLParam(r, "matchId")
 	user := middleware.UserFromContext(r.Context())
@@ -855,6 +883,11 @@ func (h *PaymentHandler) CreateMatchPayment(w http.ResponseWriter, r *http.Reque
 		sendError(w, "Failed to create payment", "INTERNAL_ERROR", 500)
 		return
 	}
+	ticket, err := h.createPaymentWSTicket(r.Context(), payment.ID)
+	if err != nil {
+		h.failPaymentWSTicket(w, r, payment.ID, nil, err)
+		return
+	}
 
 	// Build description.
 	playerName := buildDisplayName(player.UserFirstName, player.UserLastName, player.UserUsername)
@@ -890,7 +923,7 @@ func (h *PaymentHandler) CreateMatchPayment(w http.ResponseWriter, r *http.Reque
 	}
 
 	expireAt := payment.CreatedAt.Add(time.Duration(h.slotLockTTL) * time.Second).Format("2006-01-02T15:04:05.000Z")
-	wsURL := h.buildWSSubscribeURL(payment.ID)
+	wsURL := h.buildWSSubscribeURL(r, payment.ID, ticket)
 
 	sendSuccess(w, dto.CreatePaymentResponse{
 		Payment:        mapPaymentToDTO(payment),
@@ -902,7 +935,7 @@ func (h *PaymentHandler) CreateMatchPayment(w http.ResponseWriter, r *http.Reque
 	}, 201)
 }
 
-// GET /api/matches/:matchId/payment/:paymentId/status
+// GetMatchPaymentStatus GET /api/matches/:matchId/payment/:paymentId/status
 func (h *PaymentHandler) GetMatchPaymentStatus(w http.ResponseWriter, r *http.Request) {
 	paymentID := chi.URLParam(r, "paymentId")
 	payment, err := h.paymentRepo.FindByID(r.Context(), paymentID)
@@ -925,6 +958,7 @@ func (h *PaymentHandler) GetMatchPaymentStatus(w http.ResponseWriter, r *http.Re
 	}, 200)
 }
 
+// These helper functions need to be moved to util folder for easier management
 // ==================== Helpers ====================
 
 func mapPaymentToDTO(p *domain.Payment) dto.PaymentResponse {
@@ -940,6 +974,19 @@ func mapPaymentToDTO(p *domain.Payment) dto.PaymentResponse {
 		OrderURL:      p.OrderURL,
 		CreatedAt:     p.CreatedAt.Format("2006-01-02T15:04:05.000Z"),
 		UpdatedAt:     p.UpdatedAt.Format("2006-01-02T15:04:05.000Z"),
+	}
+}
+
+func paymentStatusMessage(status domain.PaymentStatus) string {
+	switch status {
+	case domain.PaymentStatusSuccess:
+		return "Payment successful"
+	case domain.PaymentStatusFailed:
+		return "Payment failed"
+	case domain.PaymentStatusExpired:
+		return "Payment expired. Please try again."
+	default:
+		return "Payment is pending"
 	}
 }
 
@@ -968,13 +1015,23 @@ func generateQRCode(orderURL *string) (*dto.QRCodeData, error) {
 	}, nil
 }
 
-func (h *PaymentHandler) buildWSSubscribeURL(paymentID string) string {
+func (h *PaymentHandler) buildWSSubscribeURL(r *http.Request, paymentID, ticket string) string {
 	scheme := "ws"
-	if h.nodeEnv == "production" {
+	proto := strings.ToLower(strings.TrimSpace(r.Header.Get("X-Forwarded-Proto")))
+	if proto == "https" || r.TLS != nil || (proto == "" && h.nodeEnv == "production") {
 		scheme = "wss"
 	}
-	host := fmt.Sprintf("localhost:%d", h.port)
-	return fmt.Sprintf("%s://%s/ws/payments?paymentId=%s", scheme, host, paymentID)
+	host := strings.TrimSpace(r.Header.Get("X-Forwarded-Host"))
+	if host == "" {
+		host = r.Host
+	}
+	if host == "" {
+		host = fmt.Sprintf("localhost:%d", h.port)
+	}
+	q := url.Values{}
+	q.Set("paymentId", paymentID)
+	q.Set("ticket", ticket)
+	return fmt.Sprintf("%s://%s/ws/payments?%s", scheme, host, q.Encode())
 }
 
 // sanitizeForKey returns a key-safe version of a string (removes hyphens).
@@ -997,13 +1054,13 @@ func (h *PaymentHandler) CancelPaymentByID(ctx context.Context, paymentID string
 	h.hub.NotifyPaymentStatus(ws.PaymentNotification{
 		Type:      "payment_status",
 		PaymentID: paymentID,
-		Status:    "cancelled",
+		Status:    string(domain.PaymentStatusFailed),
 		BookingID: p.BookingID,
 		Message:   "Payment cancelled due to client disconnect",
 	})
 }
 
-// GET /api/bookings/:id/payment — returns the latest payment for a booking
+// GetBookingPayment GET /api/bookings/:id/payment — returns the latest payment for a booking
 func (h *PaymentHandler) GetBookingPayment(w http.ResponseWriter, r *http.Request) {
 	bookingID := chi.URLParam(r, "id")
 	h.log().Info("booking payment lookup request received", append(requestLogFields(r), zap.String("booking_id", bookingID))...)

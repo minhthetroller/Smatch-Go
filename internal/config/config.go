@@ -12,10 +12,11 @@ type Config struct {
 	Port    int
 	NodeEnv string
 
-	DatabaseURL    string
-	TileServerURL  string
-	TileLayerID    string
-	SlotLockTTLSec int
+	DatabaseURL           string
+	TileServerURL         string
+	TileLayerID           string
+	SlotLockTTLSec        int
+	PaymentWSTicketTTLSec int
 
 	Redis struct {
 		Host       string
@@ -66,6 +67,7 @@ func Load() *Config {
 	cfg.TileServerURL = getEnv("TILE_SERVER_URL", "http://localhost:7800")
 	cfg.TileLayerID = getEnv("TILE_LAYER_ID", "public.courts")
 	cfg.SlotLockTTLSec = getEnvInt("SLOT_LOCK_TTL_SECONDS", 600)
+	cfg.PaymentWSTicketTTLSec = getEnvInt("PAYMENT_WS_TICKET_TTL_SECONDS", 60)
 
 	cfg.Redis.Host = getEnv("REDIS_HOST", "localhost")
 	cfg.Redis.Port = getEnvInt("REDIS_PORT", 6379)

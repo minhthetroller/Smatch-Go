@@ -1,6 +1,7 @@
 package websocket
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"sync"
@@ -79,13 +80,17 @@ type Hub struct {
 	mu     sync.RWMutex
 
 	// Payment subscriptions
-	paymentSubs  map[string]map[*websocket.Conn]struct{} // paymentId -> conns
-	connPayments map[*websocket.Conn]map[string]struct{} // conn -> paymentIds
+	paymentConn map[string]*websocket.Conn // paymentId -> conn
+	connPayment map[*websocket.Conn]string // conn -> paymentId
 
 	// Match subscriptions
 	matchSubs  map[string]map[*websocket.Conn]struct{} // matchId -> conns
 	connMatchs map[*websocket.Conn]map[string]struct{} // conn -> matchIds
 	userConns  map[string]map[*websocket.Conn]struct{} // userId -> conns
+
+	// Callbacks injected by handlers/services.
+	ValidatePaymentTicket func(ctx context.Context, paymentID, ticket string) (bool, error)
+	PaymentStatusSnapshot func(ctx context.Context, paymentID string) (*PaymentNotification, error)
 
 	// Callback for auto-cancel on payment disconnect
 	OnPaymentDisconnect func(paymentID string)
@@ -94,30 +99,38 @@ type Hub struct {
 // NewHub creates a Hub.
 func NewHub(logger *zap.Logger) *Hub {
 	return &Hub{
-		logger:       logger,
-		paymentSubs:  make(map[string]map[*websocket.Conn]struct{}),
-		connPayments: make(map[*websocket.Conn]map[string]struct{}),
-		matchSubs:    make(map[string]map[*websocket.Conn]struct{}),
-		connMatchs:   make(map[*websocket.Conn]map[string]struct{}),
-		userConns:    make(map[string]map[*websocket.Conn]struct{}),
+		logger:      logger,
+		paymentConn: make(map[string]*websocket.Conn),
+		connPayment: make(map[*websocket.Conn]string),
+		matchSubs:   make(map[string]map[*websocket.Conn]struct{}),
+		connMatchs:  make(map[*websocket.Conn]map[string]struct{}),
+		userConns:   make(map[string]map[*websocket.Conn]struct{}),
 	}
+}
+
+func (h *Hub) log() *zap.Logger {
+	if h.logger == nil {
+		return zap.NewNop()
+	}
+	return h.logger
 }
 
 // ServePayments upgrades and handles a payment WebSocket connection.
 func (h *Hub) ServePayments(w http.ResponseWriter, r *http.Request) {
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
-		h.logger.Error("ws upgrade", zap.Error(err))
+		h.log().Error("ws upgrade", zap.Error(err))
 		return
 	}
 	defer h.disconnectPayment(conn)
 
 	_ = conn.WriteJSON(map[string]string{"type": "connected", "message": "Connected to payment notification service"})
 
-	// Auto-subscribe if paymentId is provided in query params.
-	if paymentID := r.URL.Query().Get("paymentId"); paymentID != "" {
-		h.subscribePayment(paymentID, conn)
-		_ = conn.WriteJSON(map[string]interface{}{"type": "subscribed", "paymentId": paymentID})
+	// Auto-subscribe when paymentId and a single-use ticket are provided.
+	paymentID := r.URL.Query().Get("paymentId")
+	ticket := r.URL.Query().Get("ticket")
+	if paymentID != "" || ticket != "" {
+		h.handlePaymentSubscribe(r.Context(), conn, paymentID, ticket)
 	}
 
 	for {
@@ -128,16 +141,20 @@ func (h *Hub) ServePayments(w http.ResponseWriter, r *http.Request) {
 		var data struct {
 			Action    string  `json:"action"`
 			PaymentID *string `json:"paymentId"`
+			Ticket    *string `json:"ticket"`
 		}
 		if err := json.Unmarshal(msg, &data); err != nil {
-			_ = conn.WriteJSON(map[string]string{"error": "Invalid message format"})
+			_ = conn.WriteJSON(map[string]string{"type": "error", "code": "INVALID_MESSAGE", "message": "Invalid message format"})
 			continue
 		}
 		switch data.Action {
 		case "subscribe":
 			if data.PaymentID != nil {
-				h.subscribePayment(*data.PaymentID, conn)
-				_ = conn.WriteJSON(map[string]interface{}{"type": "subscribed", "paymentId": *data.PaymentID})
+				subscribeTicket := ""
+				if data.Ticket != nil {
+					subscribeTicket = *data.Ticket
+				}
+				h.handlePaymentSubscribe(r.Context(), conn, *data.PaymentID, subscribeTicket)
 			}
 		case "unsubscribe":
 			if data.PaymentID != nil {
@@ -153,7 +170,7 @@ func (h *Hub) ServePayments(w http.ResponseWriter, r *http.Request) {
 func (h *Hub) ServeMatches(w http.ResponseWriter, r *http.Request) {
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
-		h.logger.Error("ws upgrade", zap.Error(err))
+		h.log().Error("ws upgrade", zap.Error(err))
 		return
 	}
 	defer h.disconnectMatch(conn)
@@ -190,19 +207,20 @@ func (h *Hub) ServeMatches(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// NotifyPaymentStatus sends a payment notification to all subscribers of a paymentId.
+// NotifyPaymentStatus sends a payment notification to the sole subscriber of a paymentId.
 func (h *Hub) NotifyPaymentStatus(n PaymentNotification) {
-	h.mu.RLock()
-	conns := copyConns(h.paymentSubs[n.PaymentID])
-	h.mu.RUnlock()
+	h.mu.Lock()
+	defer h.mu.Unlock()
 
-	for conn := range conns {
+	conn := h.paymentConn[n.PaymentID]
+	if conn != nil && isTerminalPaymentStatus(n.Status) {
+		delete(h.paymentConn, n.PaymentID)
+		delete(h.connPayment, conn)
+	}
+
+	if conn != nil {
 		_ = conn.WriteJSON(n)
 	}
-	// Clean up subscription
-	h.mu.Lock()
-	delete(h.paymentSubs, n.PaymentID)
-	h.mu.Unlock()
 }
 
 // NotifyMatchSubscribers broadcasts a match notification to all subscribers.
@@ -225,42 +243,125 @@ func (h *Hub) NotifyUser(userID string, n MatchNotification) {
 	}
 }
 
-func (h *Hub) subscribePayment(paymentID string, conn *websocket.Conn) {
+func (h *Hub) handlePaymentSubscribe(ctx context.Context, conn *websocket.Conn, paymentID, ticket string) {
+	ok, code, msg := h.subscribePayment(ctx, paymentID, ticket, conn)
+	if !ok {
+		writePaymentError(conn, code, paymentID, msg)
+		return
+	}
+
+	// Adding mutex to ensure no data race happens
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	if h.paymentSubs[paymentID] == nil {
-		h.paymentSubs[paymentID] = make(map[*websocket.Conn]struct{})
+
+	_ = conn.WriteJSON(map[string]interface{}{"type": "subscribed", "paymentId": paymentID})
+
+	if h.PaymentStatusSnapshot == nil {
+		return
 	}
-	h.paymentSubs[paymentID][conn] = struct{}{}
-	if h.connPayments[conn] == nil {
-		h.connPayments[conn] = make(map[string]struct{})
+	n, err := h.PaymentStatusSnapshot(ctx, paymentID)
+	if err != nil {
+		h.log().Warn("payment status snapshot failed", zap.String("payment_id", paymentID), zap.Error(err))
+		return
 	}
-	h.connPayments[conn][paymentID] = struct{}{}
+	if n == nil {
+		return
+	}
+	_ = conn.WriteJSON(n)
+	if isTerminalPaymentStatus(n.Status) {
+		h.unsubscribePayment(paymentID, conn)
+	}
+}
+
+func (h *Hub) subscribePayment(ctx context.Context, paymentID, ticket string, conn *websocket.Conn) (bool, string, string) {
+	if paymentID == "" || ticket == "" {
+		return false, "INVALID_PAYMENT_WS_TICKET", "Invalid or expired payment websocket ticket"
+	}
+
+	h.mu.Lock()
+	if existingPaymentID, ok := h.connPayment[conn]; ok {
+		h.mu.Unlock()
+		if existingPaymentID == paymentID {
+			return true, "", ""
+		}
+		return false, "PAYMENT_CONNECTION_ALREADY_SUBSCRIBED", "WebSocket connection is already subscribed to another payment"
+	}
+	if existingConn := h.paymentConn[paymentID]; existingConn != nil && existingConn != conn {
+		h.mu.Unlock()
+		return false, "PAYMENT_ALREADY_SUBSCRIBED", "Payment already has an active websocket subscriber"
+	}
+	h.mu.Unlock()
+
+	if h.ValidatePaymentTicket == nil {
+		return false, "INVALID_PAYMENT_WS_TICKET", "Invalid or expired payment websocket ticket"
+	}
+	valid, err := h.ValidatePaymentTicket(ctx, paymentID, ticket)
+	if err != nil {
+		h.log().Warn("payment websocket ticket validation failed", zap.String("payment_id", paymentID), zap.Error(err))
+		return false, "INVALID_PAYMENT_WS_TICKET", "Invalid or expired payment websocket ticket"
+	}
+	if !valid {
+		return false, "INVALID_PAYMENT_WS_TICKET", "Invalid or expired payment websocket ticket"
+	}
+
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if existingPaymentID, ok := h.connPayment[conn]; ok {
+		if existingPaymentID == paymentID {
+			return true, "", ""
+		}
+		return false, "PAYMENT_CONNECTION_ALREADY_SUBSCRIBED", "WebSocket connection is already subscribed to another payment"
+	}
+	if existingConn := h.paymentConn[paymentID]; existingConn != nil && existingConn != conn {
+		return false, "PAYMENT_ALREADY_SUBSCRIBED", "Payment already has an active websocket subscriber"
+	}
+	h.paymentConn[paymentID] = conn
+	h.connPayment[conn] = paymentID
+	return true, "", ""
 }
 
 func (h *Hub) unsubscribePayment(paymentID string, conn *websocket.Conn) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	delete(h.paymentSubs[paymentID], conn)
-	delete(h.connPayments[conn], paymentID)
+	if h.paymentConn[paymentID] == conn {
+		delete(h.paymentConn, paymentID)
+	}
+	if h.connPayment[conn] == paymentID {
+		delete(h.connPayment, conn)
+	}
 }
 
 func (h *Hub) disconnectPayment(conn *websocket.Conn) {
 	h.mu.Lock()
-	paymentIDs := make([]string, 0, len(h.connPayments[conn]))
-	for pid := range h.connPayments[conn] {
-		paymentIDs = append(paymentIDs, pid)
-		delete(h.paymentSubs[pid], conn)
+	paymentID := h.connPayment[conn]
+	if paymentID != "" {
+		delete(h.paymentConn, paymentID)
 	}
-	delete(h.connPayments, conn)
+	delete(h.connPayment, conn)
 	h.mu.Unlock()
 	conn.Close()
 
 	// Auto-cancel pending payments
-	if h.OnPaymentDisconnect != nil {
-		for _, pid := range paymentIDs {
-			h.OnPaymentDisconnect(pid)
-		}
+	if h.OnPaymentDisconnect != nil && paymentID != "" {
+		h.OnPaymentDisconnect(paymentID)
+	}
+}
+
+func writePaymentError(conn *websocket.Conn, code, paymentID, message string) {
+	_ = conn.WriteJSON(map[string]interface{}{
+		"type":      "error",
+		"code":      code,
+		"paymentId": paymentID,
+		"message":   message,
+	})
+}
+
+func isTerminalPaymentStatus(status string) bool {
+	switch status {
+	case "success", "failed", "expired":
+		return true
+	default:
+		return false
 	}
 }
 

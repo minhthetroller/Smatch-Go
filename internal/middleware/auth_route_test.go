@@ -21,7 +21,6 @@ func TestCourtBookingPaymentGuestRoutePolicy(t *testing.T) {
 	r.Route("/api/payments", func(r chi.Router) {
 		r.With(authMw.OptionalAuth).Post("/create", statusHandler(http.StatusNoContent))
 		r.With(authMw.RequireAuth).Get("/{id}", statusHandler(http.StatusNoContent))
-		r.With(authMw.OptionalAuth).Get("/{id}/status", statusHandler(http.StatusNoContent))
 		r.With(authMw.RequireAuth).Post("/{id}/cancel", statusHandler(http.StatusNoContent))
 	})
 
@@ -31,7 +30,6 @@ func TestCourtBookingPaymentGuestRoutePolicy(t *testing.T) {
 	}{
 		{http.MethodPost, "/api/bookings/"},
 		{http.MethodPost, "/api/payments/create"},
-		{http.MethodGet, "/api/payments/payment-1/status"},
 		{http.MethodGet, "/api/bookings/booking-1/payment"},
 	}
 	for _, tc := range publicCases {

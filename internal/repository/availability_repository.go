@@ -392,31 +392,12 @@ func (r *AvailabilityRepository) MarkCompletedBookings(ctx context.Context) (int
 
 // MarkExpiredPendingBookings marks old pending bookings as cancelled (scheduler).
 func (r *AvailabilityRepository) MarkExpiredPendingBookings(ctx context.Context, timeoutSec int) error {
-	tx, err := r.db.Begin(ctx)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback(ctx) //nolint:errcheck
-
-	_, err = tx.Exec(ctx, `
-		UPDATE payments SET status = 'failed', updated_at = NOW()
-		WHERE status = 'pending'
-		  AND created_at < NOW() - ($1 || ' seconds')::interval
-	`, strconv.Itoa(timeoutSec))
-	if err != nil {
-		return err
-	}
-
-	_, err = tx.Exec(ctx, `
+	_, err := r.db.Exec(ctx, `
 		UPDATE bookings SET status = 'cancelled', updated_at = NOW()
 		WHERE status = 'pending'
 		  AND created_at < NOW() - ($1 || ' seconds')::interval
 	`, strconv.Itoa(timeoutSec))
-	if err != nil {
-		return err
-	}
-
-	return tx.Commit(ctx)
+	return err
 }
 
 // LinkGuestBookings links guest bookings (by phone) to a user account.

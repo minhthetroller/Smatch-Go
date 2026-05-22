@@ -73,6 +73,8 @@ go run ./cmd/server
 - DTOs: one file per feature in `internal/dto/`. JSON tags required. Validation belongs in handlers before service calls.
 - Service layer: business logic only, no HTTP concerns. Inject repository interfaces.
 - Logging: `zap` via DI. Use structured fields, never `fmt.Sprintf`.
+- When removing or replacing behavior, also remove deprecated routes, methods, unused helpers, dead code, and stale tests in the same change.
+- Do not leave compatibility shims unless explicitly requested.
 
 ## Operational Notes
 
