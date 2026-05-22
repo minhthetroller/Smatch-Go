@@ -210,12 +210,13 @@ func (h *Hub) ServeMatches(w http.ResponseWriter, r *http.Request) {
 // NotifyPaymentStatus sends a payment notification to the sole subscriber of a paymentId.
 func (h *Hub) NotifyPaymentStatus(n PaymentNotification) {
 	h.mu.Lock()
+	defer h.mu.Unlock()
+
 	conn := h.paymentConn[n.PaymentID]
 	if conn != nil && isTerminalPaymentStatus(n.Status) {
 		delete(h.paymentConn, n.PaymentID)
 		delete(h.connPayment, conn)
 	}
-	h.mu.Unlock()
 
 	if conn != nil {
 		_ = conn.WriteJSON(n)
@@ -248,6 +249,10 @@ func (h *Hub) handlePaymentSubscribe(ctx context.Context, conn *websocket.Conn, 
 		writePaymentError(conn, code, paymentID, msg)
 		return
 	}
+
+	// Adding mutex to ensure no data race happens
+	h.mu.Lock()
+	defer h.mu.Unlock()
 
 	_ = conn.WriteJSON(map[string]interface{}{"type": "subscribed", "paymentId": paymentID})
 
