@@ -68,7 +68,7 @@ Copy `.env.example` → `.env`. Key vars:
 | `AWS_ENDPOINT` | — | Set to LocalStack URL for local S3 |
 | `AWS_S3_BUCKET_PROFILE/MATCHES` | `smatch-profiles/smatch-matches` | |
 | `ADMIN_SECRET` | — | Bearer token for admin API |
-| `SLOT_LOCK_TTL_SECONDS` | `600` | Redis slot lock duration |
+| `PAYMENT_WS_TICKET_TTL_SECONDS` | `60` | Short-lived websocket subscription ticket TTL; payment validity is fixed at 300s |
 | `TILE_SERVER_URL` | `http://localhost:7800` | pg_tileserv URL |
 
 ## Code Conventions

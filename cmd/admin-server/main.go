@@ -118,9 +118,10 @@ func main() {
 	// Router
 	r := chi.NewRouter()
 
-	r.Use(chimiddleware.Recoverer)
 	r.Use(chimiddleware.RequestID)
 	r.Use(chimiddleware.RealIP)
+	r.Use(middleware.RequestLogger(logger))
+	r.Use(chimiddleware.Recoverer)
 	r.Use(chimiddleware.RequestSize(10 * 1024 * 1024))
 	r.Use(chimiddleware.Timeout(30 * time.Second))
 	r.Use(middleware.SecureHeaders)

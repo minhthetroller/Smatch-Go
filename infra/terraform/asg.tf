@@ -57,25 +57,33 @@ resource "aws_launch_template" "backend" {
     arn = aws_iam_instance_profile.backend.arn
   }
 
+  monitoring {
+    enabled = true
+  }
+
   user_data = base64encode(templatefile("${path.module}/user_data.sh.tpl", {
-    aws_region             = var.aws_region
-    ecr_repo_url           = var.ecr_repo_url
-    image_tag              = "latest"
-    backend_port           = var.backend_port
-    database_url           = "postgresql://${var.db_username}:${var.db_password}@${aws_db_instance.main.address}:${aws_db_instance.main.port}/${var.db_name}?sslmode=require"
-    redis_host             = aws_elasticache_cluster.main.cache_nodes[0].address
-    redis_port             = tostring(aws_elasticache_cluster.main.port)
-    redis_password         = var.redis_password
-    s3_bucket_profile      = aws_s3_bucket.profile.bucket
-    s3_bucket_matches      = aws_s3_bucket.matches.bucket
-    zalopay_app_id         = var.zalopay_app_id
-    zalopay_key1           = var.zalopay_key1
-    zalopay_key2           = var.zalopay_key2
-    zalopay_endpoint       = var.zalopay_endpoint
-    zalopay_callback_url   = var.zalopay_callback_url
-    tile_server_url        = var.tile_server_url
-    admin_secret           = var.admin_secret
-    rate_limit_trusted_ips = var.rate_limit_trusted_ips
+    aws_region                = var.aws_region
+    ecr_repo_url              = var.ecr_repo_url
+    image_tag                 = "latest"
+    backend_port              = var.backend_port
+    database_url              = "postgresql://${var.db_username}:${var.db_password}@${aws_db_instance.main.address}:${aws_db_instance.main.port}/${var.db_name}?sslmode=require"
+    redis_host                = aws_elasticache_cluster.main.cache_nodes[0].address
+    redis_port                = tostring(aws_elasticache_cluster.main.port)
+    redis_password            = var.redis_password
+    s3_bucket_profile         = aws_s3_bucket.profile.bucket
+    s3_bucket_matches         = aws_s3_bucket.matches.bucket
+    s3_bucket_business_docs   = aws_s3_bucket.business_docs.bucket
+    zalopay_app_id            = var.zalopay_app_id
+    zalopay_key1              = var.zalopay_key1
+    zalopay_key2              = var.zalopay_key2
+    zalopay_endpoint          = var.zalopay_endpoint
+    zalopay_callback_url      = var.zalopay_callback_url
+    tile_server_url           = var.tile_server_url
+    admin_secret              = var.admin_secret
+    admin_web_origin          = var.admin_domain_name != "" ? "https://${var.admin_domain_name}" : ""
+    rate_limit_trusted_ips    = var.rate_limit_trusted_ips
+    cloudwatch_log_group_name = aws_cloudwatch_log_group.backend.name
+    service_name              = "backend"
   }))
 
   lifecycle {
@@ -111,15 +119,53 @@ resource "aws_autoscaling_group" "backend" {
     }
   }
 
+  lifecycle {
+    ignore_changes = [desired_capacity]
+  }
+
   dynamic "tag" {
     for_each = {
-      Name = "${var.app_name}-backend"
-      Env  = var.environment
+      Name    = "${var.app_name}-backend"
+      Env     = var.environment
+      Service = "backend"
     }
     content {
       key                 = tag.key
       value               = tag.value
       propagate_at_launch = true
     }
+  }
+}
+
+resource "aws_autoscaling_policy" "backend_cpu_target" {
+  name                   = "${var.app_name}-${var.environment}-backend-cpu-target"
+  autoscaling_group_name = aws_autoscaling_group.backend.name
+  policy_type            = "TargetTrackingScaling"
+
+  estimated_instance_warmup = 120
+
+  target_tracking_configuration {
+    predefined_metric_specification {
+      predefined_metric_type = "ASGAverageCPUUtilization"
+    }
+
+    target_value = var.asg_cpu_target_percent
+  }
+}
+
+resource "aws_autoscaling_policy" "backend_alb_request_target" {
+  name                   = "${var.app_name}-${var.environment}-backend-alb-request-target"
+  autoscaling_group_name = aws_autoscaling_group.backend.name
+  policy_type            = "TargetTrackingScaling"
+
+  estimated_instance_warmup = 120
+
+  target_tracking_configuration {
+    predefined_metric_specification {
+      predefined_metric_type = "ALBRequestCountPerTarget"
+      resource_label         = "${aws_lb.main.arn_suffix}/${aws_lb_target_group.backend.arn_suffix}"
+    }
+
+    target_value = var.asg_request_count_target_per_minute
   }
 }

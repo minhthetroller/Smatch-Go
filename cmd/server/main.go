@@ -115,7 +115,7 @@ func main() {
 	// ── Services ────────────────────────────────────────────────────────────
 	var redisSvc *service.RedisService
 	if redisClient != nil {
-		redisSvc = service.NewRedisService(redisClient, cfg.SlotLockTTLSec)
+		redisSvc = service.NewRedisService(redisClient, service.PaymentValiditySeconds)
 	}
 	availSvc := service.NewAvailabilityService(availRepo, courtRepo)
 
@@ -123,7 +123,7 @@ func main() {
 	hub := ws.NewHub(logger)
 
 	// ── Scheduler ───────────────────────────────────────────────────────────
-	scheduler := service.NewSchedulerService(logger, availRepo, paymentRepo, matchRepo, hub, zaloClient, redisSvc, cfg.SlotLockTTLSec)
+	scheduler := service.NewSchedulerService(logger, availRepo, paymentRepo, matchRepo, hub, zaloClient, redisSvc)
 	scheduler.Start()
 	defer scheduler.Stop()
 
@@ -136,7 +136,7 @@ func main() {
 	availH := handler.NewAvailabilityHandler(availSvc, logger)
 	matchH := handler.NewMatchHandler(matchRepo, redisSvc, hub)
 	paymentH := handler.NewPaymentHandler(paymentRepo, availRepo, matchRepo, redisSvc, zaloClient, hub, logger,
-		cfg.SlotLockTTLSec, cfg.PaymentWSTicketTTLSec, cfg.Port, cfg.NodeEnv)
+		cfg.PaymentWSTicketTTLSec, cfg.Port, cfg.NodeEnv)
 	searchH := handler.NewSearchHandler(redisSvc, searchRepo, courtRepo)
 	proxyH := handler.NewProxyHandler(cfg.TileServerURL, cfg.TileLayerID)
 	wsH := handler.NewWebSocketHandler(hub)
@@ -163,9 +163,10 @@ func main() {
 	// ── Router ──────────────────────────────────────────────────────────────
 	r := chi.NewRouter()
 
-	r.Use(chimiddleware.Recoverer)
 	r.Use(chimiddleware.RequestID)
 	r.Use(chimiddleware.RealIP)
+	r.Use(middleware.RequestLogger(logger))
+	r.Use(chimiddleware.Recoverer)
 	r.Use(chimiddleware.RequestSize(10 * 1024 * 1024))
 	r.Use(chimiddleware.Timeout(30 * time.Second))
 	r.Use(cors.New(cors.Options{
@@ -182,6 +183,8 @@ func main() {
 		w.Header().Set("Content-Type", "application/json")
 		w.Write([]byte(`{"status":"ok"}`)) //nolint:errcheck
 	})
+
+	// Remove version path in prod
 	r.Get("/version", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Write([]byte(`{"version":"1.0.0","lang":"go"}`)) //nolint:errcheck

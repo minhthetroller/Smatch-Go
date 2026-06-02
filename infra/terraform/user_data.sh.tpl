@@ -3,9 +3,10 @@
 # Pulls and runs the smatch-backend Docker image from ECR.
 set -euo pipefail
 
-# ── Install Docker (Amazon Linux 2023) ────────────────────────────────────────
-dnf install -y docker
+# ── Install runtime agents (Amazon Linux 2023) ───────────────────────────────
+dnf install -y docker amazon-cloudwatch-agent
 systemctl enable --now docker
+systemctl enable --now amazon-ssm-agent || true
 
 # ── Authenticate Docker with ECR ──────────────────────────────────────────────
 aws ecr get-login-password --region ${aws_region} \
@@ -25,6 +26,8 @@ chmod 600 /etc/firebase-adminsdk.json
 # ── Write environment file (chmod 600 so only root can read secrets) ──────────
 cat > /etc/smatch.env <<EOF
 PORT=${backend_port}
+ADMIN_PORT=${backend_port}
+ADMIN_WEB_ORIGIN=${admin_web_origin}
 DATABASE_URL=${database_url}
 REDIS_HOST=${redis_host}
 REDIS_PORT=${redis_port}
@@ -54,3 +57,32 @@ docker run -d \
   -v /etc/firebase-adminsdk.json:/app/firebase-adminsdk.json:ro \
   -p ${backend_port}:${backend_port} \
   ${ecr_repo_url}:${image_tag}
+
+# ── Stream Docker logs to CloudWatch Logs ────────────────────────────────────
+cat > /opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json <<EOF
+{
+  "agent": {
+    "run_as_user": "root"
+  },
+  "logs": {
+    "logs_collected": {
+      "files": {
+        "collect_list": [
+          {
+            "file_path": "/var/lib/docker/containers/*/*.log",
+            "log_group_name": "${cloudwatch_log_group_name}",
+            "log_stream_name": "{instance_id}/${service_name}",
+            "timezone": "UTC"
+          }
+        ]
+      }
+    }
+  }
+}
+EOF
+
+/opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl \
+  -a fetch-config \
+  -m ec2 \
+  -s \
+  -c file:/opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json

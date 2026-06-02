@@ -57,13 +57,39 @@ func (f *fakePaymentStore) UpdateOrderURL(_ context.Context, id, _ string, _ str
 	return nil
 }
 
-func (f *fakePaymentStore) UpdateStatus(_ context.Context, _ string, status domain.PaymentStatus, _ *string, _ json.RawMessage) error {
+func (f *fakePaymentStore) UpdatePendingStatus(_ context.Context, id string, status domain.PaymentStatus, _ *string, _ json.RawMessage) (*domain.Payment, error) {
 	f.updateStatus = status
-	return nil
+	if f.findByID != nil && f.findByID.ID == id {
+		f.findByID.Status = status
+		return f.findByID, nil
+	}
+	return nil, nil
 }
 
-func (f *fakePaymentStore) UpdateStatusByAppTransID(context.Context, string, domain.PaymentStatus, *string, json.RawMessage) (*domain.Payment, error) {
+func (f *fakePaymentStore) UpdatePendingStatusByAppTransID(_ context.Context, appTransID string, status domain.PaymentStatus, zpTransID *string, _ json.RawMessage) (*domain.Payment, error) {
+	f.updateStatus = status
+	if f.findByID != nil && f.findByID.AppTransID == appTransID {
+		f.findByID.Status = status
+		f.findByID.ZPTransID = zpTransID
+		return f.findByID, nil
+	}
+	if f.latest != nil && f.latest.AppTransID == appTransID {
+		f.latest.Status = status
+		f.latest.ZPTransID = zpTransID
+		return f.latest, nil
+	}
 	return nil, nil
+}
+
+func (f *fakePaymentStore) FindPendingPayments(context.Context) ([]*domain.Payment, error) {
+	var payments []*domain.Payment
+	if f.findByID != nil && f.findByID.Status == domain.PaymentStatusPending {
+		payments = append(payments, f.findByID)
+	}
+	if f.latest != nil && f.latest.Status == domain.PaymentStatusPending {
+		payments = append(payments, f.latest)
+	}
+	return payments, nil
 }
 
 type fakeAvailabilityStore struct {
@@ -101,6 +127,10 @@ func (f fakeAvailabilityStore) UpdateBookingStatus(context.Context, string, stri
 	return nil
 }
 
+func (f fakeAvailabilityStore) MarkExpiredPendingBookings(context.Context, int) error {
+	return nil
+}
+
 type fakeMatchPaymentStore struct{}
 
 func (fakeMatchPaymentStore) FindByID(context.Context, string) (*repository.MatchRow, error) {
@@ -127,6 +157,10 @@ func (fakeMatchPaymentStore) UpdateStatus(context.Context, string, domain.MatchS
 	return nil
 }
 
+func (fakeMatchPaymentStore) MarkExpiredMatchPlayers(context.Context, []string) error {
+	return nil
+}
+
 type fakePaymentGateway struct {
 	createErr error
 }
@@ -135,7 +169,7 @@ func (fakePaymentGateway) GenerateAppTransID(string) string {
 	return "260520_test001"
 }
 
-func (f fakePaymentGateway) CreateOrder(string, string, string, string, string, int, zalopay.EmbedData) (*zalopay.CreateOrderResponse, error) {
+func (f fakePaymentGateway) CreateOrder(context.Context, zalopay.CreateOrderInput) (*zalopay.CreateOrderResponse, error) {
 	if f.createErr != nil {
 		return nil, f.createErr
 	}
@@ -144,6 +178,10 @@ func (f fakePaymentGateway) CreateOrder(string, string, string, string, string, 
 		OrderURL:     "https://example.test/pay",
 		ZPTransToken: "zp-token",
 	}, nil
+}
+
+func (fakePaymentGateway) QueryOrder(context.Context, string) (*zalopay.QueryOrderResponse, error) {
+	return &zalopay.QueryOrderResponse{ReturnCode: 2, IsProcessing: true}, nil
 }
 
 func (fakePaymentGateway) VerifyCallback(string, string) (*zalopay.CallbackData, bool) {
@@ -186,7 +224,6 @@ func TestCreatePayment_ReturnsWebSocketTicketURL(t *testing.T) {
 		matchRepo:          fakeMatchPaymentStore{},
 		redis:              fakePaymentRedis{ticket: "ticket-1"},
 		zalopay:            fakePaymentGateway{},
-		slotLockTTL:        900,
 		paymentWSTicketTTL: 60,
 		port:               3000,
 	}
@@ -206,6 +243,7 @@ func TestCreatePayment_ReturnsWebSocketTicketURL(t *testing.T) {
 		Success bool `json:"success"`
 		Data    struct {
 			WsSubscribeURL string `json:"wsSubscribeUrl"`
+			ExpireAt       string `json:"expireAt"`
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &env); err != nil {
@@ -213,6 +251,60 @@ func TestCreatePayment_ReturnsWebSocketTicketURL(t *testing.T) {
 	}
 	if env.Data.WsSubscribeURL != "ws://example.com/ws/payments?paymentId=payment-1&ticket=ticket-1" {
 		t.Fatalf("wsSubscribeUrl = %q", env.Data.WsSubscribeURL)
+	}
+	wantExpireAt := now.Add(service.PaymentValidity).Format("2006-01-02T15:04:05.000Z")
+	if env.Data.ExpireAt != wantExpireAt {
+		t.Fatalf("expireAt = %q, want %q", env.Data.ExpireAt, wantExpireAt)
+	}
+}
+
+func TestCreatePayment_DoesNotReturnExpiredExistingPendingPayment(t *testing.T) {
+	bookingID := "12345678-1234-1234-1234-123456789abc"
+	orderURL := "https://example.test/pay"
+	paymentStore := &fakePaymentStore{
+		latest: &domain.Payment{
+			ID:          "payment-1",
+			BookingID:   &bookingID,
+			PaymentType: domain.PaymentTypeBooking,
+			AppTransID:  "260520_test001",
+			Amount:      120000,
+			Status:      domain.PaymentStatusPending,
+			OrderURL:    &orderURL,
+			CreatedAt:   time.Now().Add(-service.PaymentValidity - time.Second),
+			UpdatedAt:   time.Now().Add(-service.PaymentValidity - time.Second),
+		},
+	}
+	h := &PaymentHandler{
+		paymentRepo: paymentStore,
+		availRepo: fakeAvailabilityStore{booking: &repository.BookingRow{
+			ID:         bookingID,
+			SubCourtID: "subcourt-1",
+			CourtName:  "Court A",
+			GuestName:  "Guest",
+			GuestPhone: "0900000000",
+			Date:       "2026-05-20",
+			StartTime:  "09:00",
+			EndTime:    "10:00",
+			TotalPrice: 120000,
+			Status:     "pending",
+		}},
+		matchRepo:          fakeMatchPaymentStore{},
+		redis:              fakePaymentRedis{ticket: "ticket-1"},
+		zalopay:            fakePaymentGateway{},
+		paymentWSTicketTTL: 60,
+		port:               3000,
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/payments/create", bytes.NewBufferString(`{"bookingId":"`+bookingID+`"}`))
+
+	h.CreatePayment(rec, req)
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusConflict, rec.Body.String())
+	}
+	if paymentStore.updateStatus != domain.PaymentStatusExpired {
+		t.Fatalf("updateStatus = %q, want expired", paymentStore.updateStatus)
 	}
 }
 
@@ -235,7 +327,6 @@ func TestCreatePayment_GatewayFailureDoesNotPanic(t *testing.T) {
 		matchRepo:          fakeMatchPaymentStore{},
 		redis:              fakePaymentRedis{ticket: "ticket-1"},
 		zalopay:            fakePaymentGateway{createErr: errors.New("gateway down")},
-		slotLockTTL:        900,
 		paymentWSTicketTTL: 60,
 		port:               3000,
 	}

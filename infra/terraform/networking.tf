@@ -177,6 +177,10 @@ resource "aws_security_group" "backend" {
     cidr_blocks = ["0.0.0.0/0"]
   }
 
+  lifecycle {
+    ignore_changes = [ingress]
+  }
+
   tags = { Name = "${var.app_name}-sg-backend" }
 }
 
@@ -201,6 +205,10 @@ resource "aws_security_group" "rds" {
     cidr_blocks = ["0.0.0.0/0"]
   }
 
+  lifecycle {
+    ignore_changes = [ingress]
+  }
+
   tags = { Name = "${var.app_name}-sg-rds" }
 }
 
@@ -223,6 +231,10 @@ resource "aws_security_group" "redis" {
     to_port     = 0
     protocol    = "-1"
     cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  lifecycle {
+    ignore_changes = [ingress]
   }
 
   tags = { Name = "${var.app_name}-sg-redis" }

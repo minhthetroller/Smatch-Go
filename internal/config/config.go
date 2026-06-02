@@ -15,7 +15,6 @@ type Config struct {
 	DatabaseURL           string
 	TileServerURL         string
 	TileLayerID           string
-	SlotLockTTLSec        int
 	PaymentWSTicketTTLSec int
 
 	Redis struct {
@@ -66,7 +65,6 @@ func Load() *Config {
 	cfg.DatabaseURL = getEnv("DATABASE_URL", "")
 	cfg.TileServerURL = getEnv("TILE_SERVER_URL", "http://localhost:7800")
 	cfg.TileLayerID = getEnv("TILE_LAYER_ID", "public.courts")
-	cfg.SlotLockTTLSec = getEnvInt("SLOT_LOCK_TTL_SECONDS", 600)
 	cfg.PaymentWSTicketTTLSec = getEnvInt("PAYMENT_WS_TICKET_TTL_SECONDS", 60)
 
 	cfg.Redis.Host = getEnv("REDIS_HOST", "localhost")

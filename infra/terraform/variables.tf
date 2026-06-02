@@ -51,7 +51,7 @@ variable "public_subnet_cidrs" {
 }
 
 variable "private_app_subnet_cidrs" {
-  description = "CIDR blocks for private app subnets (ASG / EC2 instances)"
+  description = "CIDR blocks for private app subnets (ASG / EC2 instances / ECS tasks)"
   type        = list(string)
   default     = ["10.0.3.0/24", "10.0.4.0/24"]
 }
@@ -75,6 +75,18 @@ variable "instance_type" {
   default     = "t3.small"
 }
 
+variable "admin_ami_id" {
+  description = "Optional AMI ID for admin EC2 instances. Leave empty to reuse ami_id."
+  type        = string
+  default     = ""
+}
+
+variable "admin_instance_type" {
+  description = "Optional EC2 instance type for admin instances. Leave empty to reuse instance_type."
+  type        = string
+  default     = ""
+}
+
 variable "asg_min_size" {
   description = "Minimum number of EC2 instances in the ASG"
   type        = number
@@ -91,6 +103,18 @@ variable "asg_desired_capacity" {
   description = "Desired number of EC2 instances in the ASG"
   type        = number
   default     = 2
+}
+
+variable "asg_cpu_target_percent" {
+  description = "Target average CPU utilization percentage for ASG target tracking"
+  type        = number
+  default     = 60
+}
+
+variable "asg_request_count_target_per_minute" {
+  description = "Target ALB requests per target per minute for ASG target tracking"
+  type        = number
+  default     = 100
 }
 
 variable "ecr_repo_url" {
@@ -164,6 +188,18 @@ variable "s3_bucket_business_docs" {
   description = "S3 bucket name for court owner business documents"
   type        = string
   default     = "smatch-business-docs"
+}
+
+variable "web_bucket_name" {
+  description = "S3 bucket name for the admin web static assets. Leave empty to derive a unique name."
+  type        = string
+  default     = ""
+}
+
+variable "web_bucket_force_destroy" {
+  description = "Whether Terraform can delete the admin web bucket even when it contains objects."
+  type        = bool
+  default     = true
 }
 
 # ── DNS / TLS ─────────────────────────────────────────────────────────────────
@@ -242,7 +278,7 @@ variable "rate_limit_trusted_ips" {
 # ── Admin backend ASG ─────────────────────────────────────────────────────────
 
 variable "admin_domain_name" {
-  description = "Full domain name for the admin backend (e.g. admin-smb.online)"
+  description = "Full domain name for the admin web frontend (e.g. admin-sb.online). CloudFront proxies /api/* to the admin backend."
   type        = string
   default     = ""
 }
@@ -265,24 +301,36 @@ variable "admin_asg_desired_capacity" {
   default     = 1
 }
 
-# ── pg_tileserv ASG ───────────────────────────────────────────────────────────
+# ── pg_tileserv ECS/Fargate ──────────────────────────────────────────────────
 
-variable "tileserv_asg_min_size" {
-  description = "Minimum instances in tileserv ASG"
-  type        = number
-  default     = 1
-}
-
-variable "tileserv_asg_max_size" {
-  description = "Maximum instances in tileserv ASG"
-  type        = number
-  default     = 3
-}
-
-variable "tileserv_asg_desired_capacity" {
-  description = "Desired instances in tileserv ASG"
+variable "tileserv_desired_count" {
+  description = "Desired number of pg_tileserv Fargate tasks"
   type        = number
   default     = 2
+}
+
+variable "tileserv_task_cpu" {
+  description = "CPU units for the pg_tileserv Fargate task"
+  type        = number
+  default     = 512
+}
+
+variable "tileserv_task_memory" {
+  description = "Memory in MiB for the pg_tileserv Fargate task"
+  type        = number
+  default     = 1024
+}
+
+variable "tileserv_image_url" {
+  description = "Container image for pg_tileserv"
+  type        = string
+  default     = "pramsey/pg_tileserv:latest"
+}
+
+variable "tileserv_nginx_image_url" {
+  description = "Container image for the pg_tileserv nginx rewrite proxy"
+  type        = string
+  default     = "nginx:1.27-alpine"
 }
 
 variable "tileserv_port" {
@@ -297,8 +345,64 @@ variable "tileserv_nginx_port" {
   default     = 80
 }
 
-variable "pg_tileserv_version" {
-  description = "pg_tileserv release version to download from GitHub"
+# ── Observability / incident email ───────────────────────────────────────────
+
+variable "log_retention_days" {
+  description = "CloudWatch Logs retention period in days"
+  type        = number
+  default     = 14
+}
+
+variable "incident_email" {
+  description = "Email address subscribed to incident SNS notifications"
   type        = string
-  default     = "1.0.11"
+  default     = "nguyentuanminh1105@gmail.com"
+}
+
+variable "cpu_alarm_threshold" {
+  description = "Average ASG CPU percentage that triggers incident notifications"
+  type        = number
+  default     = 70
+}
+
+variable "cpu_alarm_period_seconds" {
+  description = "CloudWatch CPU alarm period in seconds"
+  type        = number
+  default     = 60
+}
+
+variable "cpu_alarm_evaluation_periods" {
+  description = "Number of periods evaluated by the CPU alarm"
+  type        = number
+  default     = 2
+}
+
+variable "lambda_log_lookback_minutes" {
+  description = "Minutes of logs queried by the incident Lambda"
+  type        = number
+  default     = 15
+}
+
+variable "fis_cpu_stress_duration_seconds" {
+  description = "Duration in seconds used by AWS FIS CPU stress experiments"
+  type        = number
+  default     = 900
+}
+
+variable "fis_cpu_stress_percent" {
+  description = "CPU stress percentage used by AWS FIS experiments"
+  type        = number
+  default     = 85
+}
+
+variable "fis_alb_load_duration_seconds" {
+  description = "Duration in seconds used by AWS FIS ALB HTTP load experiments"
+  type        = number
+  default     = 900
+}
+
+variable "fis_alb_load_concurrency" {
+  description = "Number of parallel curl workers used by AWS FIS ALB HTTP load experiments"
+  type        = number
+  default     = 25
 }

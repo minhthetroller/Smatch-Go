@@ -250,11 +250,11 @@ func (h *Hub) handlePaymentSubscribe(ctx context.Context, conn *websocket.Conn, 
 		return
 	}
 
-	// Adding mutex to ensure no data race happens
 	h.mu.Lock()
-	defer h.mu.Unlock()
-
-	_ = conn.WriteJSON(map[string]interface{}{"type": "subscribed", "paymentId": paymentID})
+	if h.connPayment[conn] == paymentID {
+		_ = conn.WriteJSON(map[string]interface{}{"type": "subscribed", "paymentId": paymentID})
+	}
+	h.mu.Unlock()
 
 	if h.PaymentStatusSnapshot == nil {
 		return
@@ -267,10 +267,15 @@ func (h *Hub) handlePaymentSubscribe(ctx context.Context, conn *websocket.Conn, 
 	if n == nil {
 		return
 	}
-	_ = conn.WriteJSON(n)
-	if isTerminalPaymentStatus(n.Status) {
-		h.unsubscribePayment(paymentID, conn)
+	h.mu.Lock()
+	if h.paymentConn[paymentID] == conn {
+		_ = conn.WriteJSON(n)
+		if isTerminalPaymentStatus(n.Status) {
+			delete(h.paymentConn, paymentID)
+			delete(h.connPayment, conn)
+		}
 	}
+	h.mu.Unlock()
 }
 
 func (h *Hub) subscribePayment(ctx context.Context, paymentID, ticket string, conn *websocket.Conn) (bool, string, string) {

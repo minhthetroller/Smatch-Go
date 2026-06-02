@@ -28,9 +28,17 @@ private_subnet_cidrs     = ["10.0.5.0/24", "10.0.6.0/24"]
 ami_id        = "ami-0abcdef1234567890"
 instance_type = "t3.small"
 
+# Optional: use these only when the admin image architecture differs from the
+# backend image architecture. For example, a linux/arm64 admin image can run on
+# a Graviton instance with an AL2023 arm64 AMI.
+admin_ami_id        = ""
+admin_instance_type = ""
+
 asg_min_size         = 1
 asg_max_size         = 3
 asg_desired_capacity = 2
+asg_cpu_target_percent = 60
+asg_request_count_target_per_minute = 100
 
 # ── ECR ──────────────────────────────────────────────────────────────────────
 # Create ECR repo first, then push your Docker image:
@@ -55,10 +63,35 @@ zalopay_endpoint     = "https://sb-openapi.zalopay.vn"  # sandbox
 zalopay_callback_url = "https://your-domain.com/api/payments/callback"
 
 # ── Tile Server ──────────────────────────────────────────────────────────────
-# If running pg_tileserv on a separate EC2/ECS, use its private IP/DNS
+# The API ALB routes /api/map-tiles/* directly to the Fargate pg_tileserv service.
 tile_server_url = "http://localhost:7800"
 
-# ── Admin ────────────────────────────────────────────────────────────────────
-admin_secret   = ""
-redis_password = ""  # Set a strong password for ElastiCache AUTH in production
+tileserv_desired_count    = 2
+tileserv_task_cpu         = 512
+tileserv_task_memory      = 1024
+tileserv_image_url        = "pramsey/pg_tileserv:latest"
+tileserv_nginx_image_url  = "nginx:1.27-alpine"
+tileserv_port             = 7800
+tileserv_nginx_port       = 80
 
+# ── Admin ────────────────────────────────────────────────────────────────────
+admin_domain_name = "admin-sb.online"
+admin_secret      = ""
+redis_password    = "" # Set a strong password for ElastiCache AUTH in production
+
+# ── Admin web / CloudFront ───────────────────────────────────────────────────
+# Leave empty to derive smatch-<env>-admin-web-<account-id>.
+web_bucket_name          = ""
+web_bucket_force_destroy = true
+
+# ── Observability / incident response ───────────────────────────────────────
+incident_email                  = "nguyentuanminh1105@gmail.com"
+log_retention_days              = 14
+cpu_alarm_threshold             = 70
+cpu_alarm_period_seconds        = 60
+cpu_alarm_evaluation_periods    = 2
+lambda_log_lookback_minutes     = 15
+fis_cpu_stress_duration_seconds = 900
+fis_cpu_stress_percent          = 85
+fis_alb_load_duration_seconds   = 900
+fis_alb_load_concurrency        = 25

@@ -38,6 +38,8 @@ Both responses include `wsSubscribeUrl`:
 }
 ```
 
+`expireAt` is always exactly 5 minutes after the backend payment record was created. Treat the QR/order URL as invalid after that timestamp.
+
 Use `wsSubscribeUrl` exactly as returned. It already contains:
 
 - `paymentId`
