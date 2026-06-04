@@ -140,6 +140,7 @@ func main() {
 	searchH := handler.NewSearchHandler(redisSvc, searchRepo, courtRepo)
 	proxyH := handler.NewProxyHandler(cfg.TileServerURL, cfg.TileLayerID)
 	wsH := handler.NewWebSocketHandler(hub)
+	loadTestH := handler.NewLoadTestHandler(cfg.LoadTestStressEnabled, cfg.AdminSecret)
 
 	var uploadSvc *service.UploadService
 	if s3Client != nil {
@@ -175,7 +176,17 @@ func main() {
 		AllowedHeaders: []string{"Authorization", "Content-Type", "X-Admin-Secret"},
 	}).Handler)
 	if redisClient != nil {
-		r.Use(httprate.LimitByIP(100, time.Minute))
+		limitByIP := httprate.LimitByIP(100, time.Minute)
+		r.Use(func(next http.Handler) http.Handler {
+			limited := limitByIP(next)
+			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if loadTestStressRateLimitBypass(r, cfg.LoadTestStressEnabled, cfg.AdminSecret) {
+					next.ServeHTTP(w, r)
+					return
+				}
+				limited.ServeHTTP(w, r)
+			})
+		})
 	}
 
 	// Health / version
@@ -196,6 +207,7 @@ func main() {
 
 	// API routes
 	r.Route("/api", func(r chi.Router) {
+		r.Post("/load-test/stress", loadTestH.Stress)
 
 		// ── Auth ─────────────────────────────────────────────────────────
 		r.Route("/auth", func(r chi.Router) {
@@ -314,4 +326,12 @@ func intFromStr(s string) int {
 	n := 0
 	_, _ = fmt.Sscanf(s, "%d", &n)
 	return n
+}
+
+func loadTestStressRateLimitBypass(r *http.Request, enabled bool, adminSecret string) bool {
+	return enabled &&
+		adminSecret != "" &&
+		r.Method == http.MethodPost &&
+		r.URL.Path == "/api/load-test/stress" &&
+		r.Header.Get("X-Admin-Secret") == adminSecret
 }

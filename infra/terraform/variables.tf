@@ -275,6 +275,12 @@ variable "rate_limit_trusted_ips" {
   default     = ""
 }
 
+variable "load_test_stress_enabled" {
+  description = "Enable the protected backend CPU stress endpoint for AWS Distributed Load Testing"
+  type        = bool
+  default     = false
+}
+
 # ── Admin backend ASG ─────────────────────────────────────────────────────────
 
 variable "admin_domain_name" {
@@ -381,28 +387,4 @@ variable "lambda_log_lookback_minutes" {
   description = "Minutes of logs queried by the incident Lambda"
   type        = number
   default     = 15
-}
-
-variable "fis_cpu_stress_duration_seconds" {
-  description = "Duration in seconds used by AWS FIS CPU stress experiments"
-  type        = number
-  default     = 900
-}
-
-variable "fis_cpu_stress_percent" {
-  description = "CPU stress percentage used by AWS FIS experiments"
-  type        = number
-  default     = 85
-}
-
-variable "fis_alb_load_duration_seconds" {
-  description = "Duration in seconds used by AWS FIS ALB HTTP load experiments"
-  type        = number
-  default     = 900
-}
-
-variable "fis_alb_load_concurrency" {
-  description = "Number of parallel curl workers used by AWS FIS ALB HTTP load experiments"
-  type        = number
-  default     = 25
 }

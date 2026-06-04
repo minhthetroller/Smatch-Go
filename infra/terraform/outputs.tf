@@ -74,6 +74,11 @@ output "asg_name" {
   value = aws_autoscaling_group.backend.name
 }
 
+output "backend_target_group_arn" {
+  description = "Target group ARN for backend ALB target health checks."
+  value       = aws_lb_target_group.backend.arn
+}
+
 output "admin_asg_name" {
   value = aws_autoscaling_group.admin.name
 }
@@ -130,18 +135,7 @@ output "admin_cpu_alarm_name" {
   value = aws_cloudwatch_metric_alarm.admin_cpu_high.alarm_name
 }
 
-output "backend_fis_cpu_stress_template_id" {
-  value = aws_fis_experiment_template.backend_cpu_stress.id
-}
-
-output "admin_fis_cpu_stress_template_id" {
-  value = aws_fis_experiment_template.admin_cpu_stress.id
-}
-
-output "backend_fis_alb_http_load_template_id" {
-  value = aws_fis_experiment_template.backend_alb_http_load.id
-}
-
-output "admin_fis_alb_http_load_template_id" {
-  value = aws_fis_experiment_template.admin_alb_http_load.id
+output "infrastructure_dashboard_name" {
+  description = "CloudWatch dashboard for RDS, EC2, host, and ECS infrastructure metrics."
+  value       = aws_cloudwatch_dashboard.infrastructure.dashboard_name
 }

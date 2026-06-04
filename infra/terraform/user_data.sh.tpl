@@ -46,6 +46,7 @@ ZALOPAY_CALLBACK_URL=${zalopay_callback_url}
 TILE_SERVER_URL=${tile_server_url}
 ADMIN_SECRET=${admin_secret}
 RATE_LIMIT_TRUSTED_IPS=${rate_limit_trusted_ips}
+LOAD_TEST_STRESS_ENABLED=${load_test_stress_enabled}
 EOF
 chmod 600 /etc/smatch.env
 
@@ -63,6 +64,49 @@ cat > /opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json <<EOF
 {
   "agent": {
     "run_as_user": "root"
+  },
+  "metrics": {
+    "append_dimensions": {
+      "AutoScalingGroupName": "\$${aws:AutoScalingGroupName}",
+      "ImageId": "\$${aws:ImageId}",
+      "InstanceId": "\$${aws:InstanceId}",
+      "InstanceType": "\$${aws:InstanceType}"
+    },
+    "aggregation_dimensions": [
+      ["AutoScalingGroupName"],
+      ["InstanceId"]
+    ],
+    "metrics_collected": {
+      "disk": {
+        "measurement": [
+          "used_percent",
+          "inodes_used"
+        ],
+        "metrics_collection_interval": 60,
+        "resources": [
+          "/"
+        ]
+      },
+      "diskio": {
+        "measurement": [
+          "read_bytes",
+          "write_bytes",
+          "reads",
+          "writes"
+        ],
+        "metrics_collection_interval": 60,
+        "resources": [
+          "*"
+        ]
+      },
+      "mem": {
+        "measurement": [
+          "mem_used_percent",
+          "mem_available_percent"
+        ],
+        "metrics_collection_interval": 60
+      }
+    }
   },
   "logs": {
     "logs_collected": {

@@ -82,6 +82,7 @@ resource "aws_launch_template" "backend" {
     admin_secret              = var.admin_secret
     admin_web_origin          = var.admin_domain_name != "" ? "https://${var.admin_domain_name}" : ""
     rate_limit_trusted_ips    = var.rate_limit_trusted_ips
+    load_test_stress_enabled  = tostring(var.load_test_stress_enabled)
     cloudwatch_log_group_name = aws_cloudwatch_log_group.backend.name
     service_name              = "backend"
   }))
@@ -105,7 +106,7 @@ resource "aws_autoscaling_group" "backend" {
 
   launch_template {
     id      = aws_launch_template.backend.id
-    version = "$Latest"
+    version = aws_launch_template.backend.latest_version
   }
 
   target_group_arns         = [aws_lb_target_group.backend.arn]
@@ -114,6 +115,7 @@ resource "aws_autoscaling_group" "backend" {
 
   instance_refresh {
     strategy = "Rolling"
+
     preferences {
       min_healthy_percentage = 50
     }

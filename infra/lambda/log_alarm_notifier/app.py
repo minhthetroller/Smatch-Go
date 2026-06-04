@@ -156,8 +156,7 @@ def format_log(log):
         f"  endpoint: {log.get('endpoint', log.get('path', ''))}",
         f"  method: {log.get('method', '')}",
         f"  status: {log.get('status', '')}",
-        f"  content_type: {log.get('content_type', '')}",
-        f"  payload_summary: {log.get('payload_summary', '')}",
+        f"  duration_ms: {log.get('duration_ms', '')}",
     ]
     if log.get("error"):
         fields.append(f"  error: {log.get('error')}")

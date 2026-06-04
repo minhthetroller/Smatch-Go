@@ -82,6 +82,7 @@ resource "aws_launch_template" "admin" {
     admin_secret              = var.admin_secret
     admin_web_origin          = var.admin_domain_name != "" ? "https://${var.admin_domain_name}" : ""
     rate_limit_trusted_ips    = var.rate_limit_trusted_ips
+    load_test_stress_enabled  = "false"
     cloudwatch_log_group_name = aws_cloudwatch_log_group.admin.name
     service_name              = "admin"
   }))
@@ -104,7 +105,7 @@ resource "aws_autoscaling_group" "admin" {
 
   launch_template {
     id      = aws_launch_template.admin.id
-    version = "$Latest"
+    version = aws_launch_template.admin.latest_version
   }
 
   target_group_arns         = [aws_lb_target_group.admin.arn]
@@ -113,6 +114,7 @@ resource "aws_autoscaling_group" "admin" {
 
   instance_refresh {
     strategy = "Rolling"
+
     preferences {
       min_healthy_percentage = 50
     }

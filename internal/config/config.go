@@ -49,6 +49,8 @@ type Config struct {
 	AdminSecret    string
 	AdminPort      int
 	AdminWebOrigin string
+
+	LoadTestStressEnabled bool
 }
 
 func Load() *Config {
@@ -91,6 +93,7 @@ func Load() *Config {
 	cfg.AdminSecret = getEnv("ADMIN_SECRET", "")
 	cfg.AdminPort = getEnvInt("ADMIN_PORT", 3001)
 	cfg.AdminWebOrigin = getEnv("ADMIN_WEB_ORIGIN", "https://admin-sb.online")
+	cfg.LoadTestStressEnabled = getEnv("LOAD_TEST_STRESS_ENABLED", "false") == "true"
 
 	return cfg
 }
