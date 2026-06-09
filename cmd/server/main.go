@@ -42,6 +42,7 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
+	logger = logger.With(zap.String("service", "backend"))
 	defer logger.Sync() //nolint:errcheck
 
 	ctx := context.Background()
@@ -166,10 +167,15 @@ func main() {
 
 	r.Use(chimiddleware.RequestID)
 	r.Use(chimiddleware.RealIP)
+	r.Use(middleware.Recoverer(logger))
+	r.Use(middleware.RequestLogContext)
 	r.Use(middleware.RequestLogger(logger))
-	r.Use(chimiddleware.Recoverer)
 	r.Use(chimiddleware.RequestSize(10 * 1024 * 1024))
-	r.Use(chimiddleware.Timeout(30 * time.Second))
+	r.Use(middleware.RequestTimeout(middleware.TimeoutConfig{
+		Fast:    time.Duration(cfg.HTTPTimeout.FastMS) * time.Millisecond,
+		Default: time.Duration(cfg.HTTPTimeout.DefaultSeconds) * time.Second,
+		Payment: time.Duration(cfg.HTTPTimeout.PaymentSeconds) * time.Second,
+	}, logger))
 	r.Use(cors.New(cors.Options{
 		AllowedOrigins: []string{"*"},
 		AllowedMethods: []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},

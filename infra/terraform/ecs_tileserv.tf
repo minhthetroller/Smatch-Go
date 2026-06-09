@@ -2,34 +2,6 @@
 
 locals {
   tileserv_database_url = "postgresql://${var.db_username}:${var.db_password}@${aws_db_instance.replica.address}:${var.db_port}/${var.db_name}?sslmode=require"
-
-  tileserv_nginx_config = <<-NGINX
-    server {
-        listen ${var.tileserv_nginx_port};
-        server_name _;
-
-        location ~ ^/api/map-tiles/([0-9]+)/([0-9]+)/([0-9]+)\\.pbf$ {
-            rewrite ^/api/map-tiles/(.*)$ /public.courts/$1 break;
-            proxy_pass         http://127.0.0.1:${var.tileserv_port};
-            proxy_set_header   Host              $host;
-            proxy_set_header   X-Real-IP         $remote_addr;
-            proxy_set_header   X-Forwarded-For   $proxy_add_x_forwarded_for;
-            proxy_set_header   X-Forwarded-Proto $scheme;
-            proxy_read_timeout 30s;
-            proxy_send_timeout 30s;
-        }
-
-        location / {
-            proxy_pass         http://127.0.0.1:${var.tileserv_port};
-            proxy_set_header   Host              $host;
-            proxy_set_header   X-Real-IP         $remote_addr;
-            proxy_set_header   X-Forwarded-For   $proxy_add_x_forwarded_for;
-            proxy_set_header   X-Forwarded-Proto $scheme;
-            proxy_read_timeout 30s;
-            proxy_send_timeout 30s;
-        }
-    }
-  NGINX
 }
 
 resource "aws_cloudwatch_log_group" "tileserv" {
@@ -117,33 +89,6 @@ resource "aws_ecs_task_definition" "tileserv" {
           "awslogs-stream-prefix" = "pg_tileserv"
         }
       }
-    },
-    {
-      name      = "tileserv-nginx"
-      image     = var.tileserv_nginx_image_url
-      essential = true
-      portMappings = [{
-        containerPort = var.tileserv_nginx_port
-        hostPort      = var.tileserv_nginx_port
-        protocol      = "tcp"
-      }]
-      command = [
-        "sh",
-        "-c",
-        "cat > /etc/nginx/conf.d/default.conf <<'NGINX'\n${local.tileserv_nginx_config}\nNGINX\nnginx -g 'daemon off;'"
-      ]
-      dependsOn = [{
-        containerName = "pg-tileserv"
-        condition     = "START"
-      }]
-      logConfiguration = {
-        logDriver = "awslogs"
-        options = {
-          "awslogs-group"         = aws_cloudwatch_log_group.tileserv.name
-          "awslogs-region"        = var.aws_region
-          "awslogs-stream-prefix" = "nginx"
-        }
-      }
     }
   ])
 
@@ -170,8 +115,8 @@ resource "aws_ecs_service" "tileserv" {
 
   load_balancer {
     target_group_arn = aws_lb_target_group.tileserv.arn
-    container_name   = "tileserv-nginx"
-    container_port   = var.tileserv_nginx_port
+    container_name   = "pg-tileserv"
+    container_port   = var.tileserv_port
   }
 
   depends_on = [

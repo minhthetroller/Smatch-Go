@@ -3,8 +3,11 @@
 # Pulls and runs the smatch-backend Docker image from ECR.
 set -euo pipefail
 
-# ── Install runtime agents (Amazon Linux 2023) ───────────────────────────────
-dnf install -y docker amazon-cloudwatch-agent
+# ── Verify baked runtime agents (Amazon Linux 2023) ──────────────────────────
+command -v aws >/dev/null
+command -v docker >/dev/null
+test -x /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl
+
 systemctl enable --now docker
 systemctl enable --now amazon-ssm-agent || true
 
@@ -55,6 +58,9 @@ docker run -d \
   --name smatch-backend \
   --restart unless-stopped \
   --env-file /etc/smatch.env \
+%{ if container_cpu_limit != "" ~}
+  --cpus ${container_cpu_limit} \
+%{ endif ~}
   -v /etc/firebase-adminsdk.json:/app/firebase-adminsdk.json:ro \
   -p ${backend_port}:${backend_port} \
   ${ecr_repo_url}:${image_tag}
@@ -77,12 +83,27 @@ cat > /opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json <<EOF
       ["InstanceId"]
     ],
     "metrics_collected": {
+%{ if cloudwatch_cpu_metrics_enabled ~}
+      "cpu": {
+        "measurement": [
+          "usage_idle",
+          "usage_user",
+          "usage_system",
+          "usage_iowait"
+        ],
+        "metrics_collection_interval": ${cloudwatch_metrics_collection_interval_seconds},
+        "resources": [
+          "*"
+        ],
+        "totalcpu": true
+      },
+%{ endif ~}
       "disk": {
         "measurement": [
           "used_percent",
           "inodes_used"
         ],
-        "metrics_collection_interval": 60,
+        "metrics_collection_interval": ${cloudwatch_metrics_collection_interval_seconds},
         "resources": [
           "/"
         ]
@@ -94,7 +115,7 @@ cat > /opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json <<EOF
           "reads",
           "writes"
         ],
-        "metrics_collection_interval": 60,
+        "metrics_collection_interval": ${cloudwatch_metrics_collection_interval_seconds},
         "resources": [
           "*"
         ]
@@ -104,7 +125,7 @@ cat > /opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json <<EOF
           "mem_used_percent",
           "mem_available_percent"
         ],
-        "metrics_collection_interval": 60
+        "metrics_collection_interval": ${cloudwatch_metrics_collection_interval_seconds}
       }
     }
   },

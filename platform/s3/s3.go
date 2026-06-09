@@ -5,12 +5,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
+	"github.com/aws/smithy-go"
 )
 
 // Config holds AWS S3 settings.
@@ -37,8 +39,10 @@ type Client struct {
 func New(ctx context.Context, cfg Config) (*Client, error) {
 	opts := []func(*awsconfig.LoadOptions) error{
 		awsconfig.WithRegion(cfg.Region),
-		awsconfig.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(
-			cfg.AccessKeyID, cfg.SecretAccessKey, "")),
+	}
+	if strings.TrimSpace(cfg.AccessKeyID) != "" && strings.TrimSpace(cfg.SecretAccessKey) != "" {
+		opts = append(opts, awsconfig.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(
+			cfg.AccessKeyID, cfg.SecretAccessKey, "")))
 	}
 
 	awsCfg, err := awsconfig.LoadDefaultConfig(ctx, opts...)
@@ -69,13 +73,21 @@ func (c *Client) EnsureBuckets(ctx context.Context, buckets ...string) error {
 		if bucket == "" {
 			continue
 		}
+		_, err := c.s3.HeadBucket(ctx, &s3.HeadBucketInput{Bucket: aws.String(bucket)})
+		if err == nil {
+			continue
+		}
+		if !isBucketNotFound(err) {
+			return fmt.Errorf("s3: check bucket %q: %w", bucket, err)
+		}
+
 		input := &s3.CreateBucketInput{Bucket: aws.String(bucket)}
 		if c.region != "" && c.region != "us-east-1" {
 			input.CreateBucketConfiguration = &types.CreateBucketConfiguration{
 				LocationConstraint: types.BucketLocationConstraint(c.region),
 			}
 		}
-		_, err := c.s3.CreateBucket(ctx, input)
+		_, err = c.s3.CreateBucket(ctx, input)
 		if err != nil {
 			var alreadyOwned *types.BucketAlreadyOwnedByYou
 			var alreadyExists *types.BucketAlreadyExists
@@ -86,6 +98,14 @@ func (c *Client) EnsureBuckets(ctx context.Context, buckets ...string) error {
 		}
 	}
 	return nil
+}
+
+func isBucketNotFound(err error) bool {
+	var apiErr smithy.APIError
+	if !errors.As(err, &apiErr) {
+		return false
+	}
+	return apiErr.ErrorCode() == "NotFound" || apiErr.ErrorCode() == "NoSuchBucket"
 }
 
 // PutObject uploads an object to S3.

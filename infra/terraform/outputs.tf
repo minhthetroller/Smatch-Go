@@ -123,6 +123,30 @@ output "incident_sns_topic_arn" {
   value = aws_sns_topic.incident_alerts.arn
 }
 
+output "incident_alarm_queue_url" {
+  value = aws_sqs_queue.incident_alarm.url
+}
+
+output "incident_alarm_queue_arn" {
+  value = aws_sqs_queue.incident_alarm.arn
+}
+
+output "incident_alarm_dlq_url" {
+  value = aws_sqs_queue.incident_alarm_dlq.url
+}
+
+output "incident_alarm_dlq_arn" {
+  value = aws_sqs_queue.incident_alarm_dlq.arn
+}
+
+output "incident_alarm_event_rule_name" {
+  value = aws_cloudwatch_event_rule.cpu_alarm_to_queue.name
+}
+
+output "log_alarm_notifier_sqs_event_source_mapping_uuid" {
+  value = aws_lambda_event_source_mapping.log_alarm_notifier_sqs.uuid
+}
+
 output "log_alarm_notifier_function_name" {
   value = aws_lambda_function.log_alarm_notifier.function_name
 }

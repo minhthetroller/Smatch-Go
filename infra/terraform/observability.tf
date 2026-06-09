@@ -44,6 +44,7 @@ data "archive_file" "log_alarm_notifier" {
   type        = "zip"
   source_dir  = "${path.module}/../lambda/log_alarm_notifier"
   output_path = "${path.module}/.terraform/log_alarm_notifier.zip"
+  excludes    = ["__pycache__/*", "*.pyc"]
 }
 
 resource "aws_iam_role" "log_alarm_notifier" {
@@ -91,6 +92,16 @@ resource "aws_iam_role_policy" "log_alarm_notifier" {
         Effect   = "Allow"
         Action   = ["sns:Publish"]
         Resource = aws_sns_topic.incident_alerts.arn
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "sqs:ReceiveMessage",
+          "sqs:DeleteMessage",
+          "sqs:GetQueueAttributes",
+          "sqs:ChangeMessageVisibility"
+        ]
+        Resource = aws_sqs_queue.incident_alarm.arn
       }
     ]
   })
@@ -102,7 +113,7 @@ resource "aws_lambda_function" "log_alarm_notifier" {
   role             = aws_iam_role.log_alarm_notifier.arn
   handler          = "app.handler"
   runtime          = "python3.12"
-  timeout          = 60
+  timeout          = 600
   memory_size      = 256
   filename         = data.archive_file.log_alarm_notifier.output_path
   source_code_hash = data.archive_file.log_alarm_notifier.output_base64sha256
@@ -118,6 +129,10 @@ resource "aws_lambda_function" "log_alarm_notifier" {
         (aws_cloudwatch_metric_alarm.backend_cpu_high.alarm_name) = "backend"
         (aws_cloudwatch_metric_alarm.admin_cpu_high.alarm_name)   = "admin"
       })
+      ALARM_SERVICE_PREFIXES_JSON = jsonencode({
+        "TargetTracking-${aws_autoscaling_group.backend.name}-AlarmHigh-" = "backend"
+        "TargetTracking-${aws_autoscaling_group.admin.name}-AlarmHigh-"   = "admin"
+      })
       LOOKBACK_MINUTES = tostring(var.lambda_log_lookback_minutes)
     }
   }
@@ -125,7 +140,65 @@ resource "aws_lambda_function" "log_alarm_notifier" {
   tags = { Name = "${var.app_name}-log-alarm-notifier" }
 }
 
-# ── CPU alarms and EventBridge routing ───────────────────────────────────────
+# ── Delayed incident alarm queue ─────────────────────────────────────────────
+
+resource "aws_sqs_queue" "incident_alarm_dlq" {
+  name                      = "${var.app_name}-${var.environment}-incident-alarm-dlq"
+  message_retention_seconds = 1209600
+
+  tags = { Name = "${var.app_name}-incident-alarm-dlq" }
+}
+
+resource "aws_sqs_queue" "incident_alarm" {
+  name                       = "${var.app_name}-${var.environment}-incident-alarm-delay"
+  delay_seconds              = var.incident_alarm_queue_delay_seconds
+  visibility_timeout_seconds = var.incident_alarm_queue_visibility_timeout_seconds
+  message_retention_seconds  = 1209600
+
+  redrive_policy = jsonencode({
+    deadLetterTargetArn = aws_sqs_queue.incident_alarm_dlq.arn
+    maxReceiveCount     = 3
+  })
+
+  tags = { Name = "${var.app_name}-incident-alarm-delay" }
+}
+
+data "aws_iam_policy_document" "incident_alarm_queue" {
+  statement {
+    sid     = "AllowEventBridgeIncidentAlarmMessages"
+    effect  = "Allow"
+    actions = ["sqs:SendMessage"]
+
+    principals {
+      type        = "Service"
+      identifiers = ["events.amazonaws.com"]
+    }
+
+    resources = [aws_sqs_queue.incident_alarm.arn]
+
+    condition {
+      test     = "ArnEquals"
+      variable = "aws:SourceArn"
+      values   = [aws_cloudwatch_event_rule.cpu_alarm_to_queue.arn]
+    }
+  }
+}
+
+resource "aws_sqs_queue_policy" "incident_alarm" {
+  queue_url = aws_sqs_queue.incident_alarm.id
+  policy    = data.aws_iam_policy_document.incident_alarm_queue.json
+}
+
+resource "aws_lambda_event_source_mapping" "log_alarm_notifier_sqs" {
+  event_source_arn        = aws_sqs_queue.incident_alarm.arn
+  function_name           = aws_lambda_function.log_alarm_notifier.arn
+  batch_size              = 1
+  function_response_types = ["ReportBatchItemFailures"]
+
+  depends_on = [aws_iam_role_policy.log_alarm_notifier]
+}
+
+# ── CPU alarms and delayed EventBridge routing ───────────────────────────────
 
 resource "aws_cloudwatch_metric_alarm" "backend_cpu_high" {
   alarm_name          = "${var.app_name}-${var.environment}-backend-cpu-high"
@@ -167,9 +240,9 @@ resource "aws_cloudwatch_metric_alarm" "admin_cpu_high" {
   tags = { Name = "${var.app_name}-admin-cpu-high" }
 }
 
-resource "aws_cloudwatch_event_rule" "cpu_alarm_to_lambda" {
-  name        = "${var.app_name}-${var.environment}-cpu-alarm-to-lambda"
-  description = "Routes backend/admin CPU alarm state changes to the log notifier Lambda."
+resource "aws_cloudwatch_event_rule" "cpu_alarm_to_queue" {
+  name        = "${var.app_name}-${var.environment}-cpu-alarm-to-queue"
+  description = "Routes backend/admin CPU alarm state changes to the delayed incident queue."
 
   event_pattern = jsonencode({
     source        = ["aws.cloudwatch"]
@@ -177,7 +250,9 @@ resource "aws_cloudwatch_event_rule" "cpu_alarm_to_lambda" {
     detail = {
       alarmName = [
         aws_cloudwatch_metric_alarm.backend_cpu_high.alarm_name,
-        aws_cloudwatch_metric_alarm.admin_cpu_high.alarm_name
+        aws_cloudwatch_metric_alarm.admin_cpu_high.alarm_name,
+        { prefix = "TargetTracking-${aws_autoscaling_group.backend.name}-AlarmHigh-" },
+        { prefix = "TargetTracking-${aws_autoscaling_group.admin.name}-AlarmHigh-" }
       ]
       state = {
         value = ["ALARM"]
@@ -185,19 +260,11 @@ resource "aws_cloudwatch_event_rule" "cpu_alarm_to_lambda" {
     }
   })
 
-  tags = { Name = "${var.app_name}-cpu-alarm-to-lambda" }
+  tags = { Name = "${var.app_name}-cpu-alarm-to-queue" }
 }
 
-resource "aws_cloudwatch_event_target" "cpu_alarm_to_lambda" {
-  rule      = aws_cloudwatch_event_rule.cpu_alarm_to_lambda.name
-  target_id = "log-alarm-notifier"
-  arn       = aws_lambda_function.log_alarm_notifier.arn
-}
-
-resource "aws_lambda_permission" "allow_eventbridge_cpu_alarm" {
-  statement_id  = "AllowExecutionFromEventBridgeCpuAlarm"
-  action        = "lambda:InvokeFunction"
-  function_name = aws_lambda_function.log_alarm_notifier.function_name
-  principal     = "events.amazonaws.com"
-  source_arn    = aws_cloudwatch_event_rule.cpu_alarm_to_lambda.arn
+resource "aws_cloudwatch_event_target" "cpu_alarm_to_queue" {
+  rule      = aws_cloudwatch_event_rule.cpu_alarm_to_queue.name
+  target_id = "incident-alarm-delay-queue"
+  arn       = aws_sqs_queue.incident_alarm.arn
 }

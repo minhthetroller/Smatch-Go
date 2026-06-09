@@ -75,6 +75,28 @@ variable "instance_type" {
   default     = "t3.small"
 }
 
+variable "backend_container_cpu_limit" {
+  description = "Maximum vCPU allocated to the backend Docker container; leaves CPU headroom for CloudWatch Agent and host tasks"
+  type        = number
+  default     = 1.8
+
+  validation {
+    condition     = var.backend_container_cpu_limit > 0 && var.backend_container_cpu_limit <= 2
+    error_message = "backend_container_cpu_limit must be greater than 0 and less than or equal to 2."
+  }
+}
+
+variable "backend_cloudwatch_metrics_collection_interval_seconds" {
+  description = "High-resolution CloudWatch Agent metrics collection interval for backend instances"
+  type        = number
+  default     = 10
+
+  validation {
+    condition     = contains([1, 5, 10, 30, 60], var.backend_cloudwatch_metrics_collection_interval_seconds)
+    error_message = "backend_cloudwatch_metrics_collection_interval_seconds must be one of 1, 5, 10, 30, or 60."
+  }
+}
+
 variable "admin_ami_id" {
   description = "Optional AMI ID for admin EC2 instances. Leave empty to reuse ami_id."
   type        = string
@@ -333,22 +355,10 @@ variable "tileserv_image_url" {
   default     = "pramsey/pg_tileserv:latest"
 }
 
-variable "tileserv_nginx_image_url" {
-  description = "Container image for the pg_tileserv nginx rewrite proxy"
-  type        = string
-  default     = "nginx:1.27-alpine"
-}
-
 variable "tileserv_port" {
   description = "Port pg_tileserv binary listens on"
   type        = number
   default     = 7800
-}
-
-variable "tileserv_nginx_port" {
-  description = "Port nginx listens on for tileserv (the port ALB forwards to)"
-  type        = number
-  default     = 80
 }
 
 # ── Observability / incident email ───────────────────────────────────────────
@@ -387,4 +397,27 @@ variable "lambda_log_lookback_minutes" {
   description = "Minutes of logs queried by the incident Lambda"
   type        = number
   default     = 15
+}
+
+variable "incident_alarm_queue_delay_seconds" {
+  description = "Seconds SQS delays incident alarm delivery before invoking the log notifier Lambda"
+  type        = number
+  default     = 600
+
+  validation {
+    condition     = var.incident_alarm_queue_delay_seconds >= 0 && var.incident_alarm_queue_delay_seconds <= 900
+    error_message = "incident_alarm_queue_delay_seconds must be between 0 and 900 seconds."
+  }
+}
+
+variable "incident_alarm_queue_visibility_timeout_seconds" {
+  description = "SQS visibility timeout for incident alarm messages"
+  type        = number
+  default     = 900 # Increase to 15 minutes to allow more time for the log notifier Lambda to process and prevent premature retries
+                    # Current Lambda timeout is 10 minutes, so this should be set higher to avoid duplicate processing 
+
+  validation {
+    condition     = var.incident_alarm_queue_visibility_timeout_seconds >= 60 && var.incident_alarm_queue_visibility_timeout_seconds <= 43200
+    error_message = "incident_alarm_queue_visibility_timeout_seconds must be between 60 and 43200 seconds."
+  }
 }

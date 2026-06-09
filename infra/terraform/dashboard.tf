@@ -271,6 +271,29 @@ resource "aws_cloudwatch_dashboard" "infrastructure" {
             [".", "NetworkTxBytes", ".", ".", ".", ".", { label = "network tx bytes", stat = "Sum", yAxis = "right" }]
           ]
         }
+      },
+      {
+        type   = "metric"
+        x      = 12
+        y      = 32
+        width  = 12
+        height = 6
+        properties = {
+          title   = "Backend Host CPU and Memory (10s CWAgent)"
+          region  = var.aws_region
+          view    = "timeSeries"
+          stacked = false
+          period  = var.backend_cloudwatch_metrics_collection_interval_seconds
+          stat    = "Average"
+          metrics = [
+            ["CWAgent", "cpu_usage_idle", "AutoScalingGroupName", aws_autoscaling_group.backend.name, { id = "cpu_idle", visible = false }],
+            [{ expression = "100 - cpu_idle", label = "backend host CPU used %", id = "cpu_used" }],
+            ["CWAgent", "mem_used_percent", "AutoScalingGroupName", aws_autoscaling_group.backend.name, { label = "backend memory used %" }]
+          ]
+          yAxis = {
+            left = { min = 0, max = 100 }
+          }
+        }
       }
     ]
   })

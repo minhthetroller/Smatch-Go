@@ -58,10 +58,10 @@ resource "aws_lb_target_group" "admin" {
   tags = { Name = "${var.app_name}-tg-admin" }
 }
 
-# pg_tileserv Fargate service (traffic hits nginx, nginx proxies to pg_tileserv on localhost:7800)
+# pg_tileserv Fargate service. ALB rewrites /api/map-tiles/* before forwarding.
 resource "aws_lb_target_group" "tileserv" {
   name        = "${var.app_name}-tg-tileserv"
-  port        = var.tileserv_nginx_port
+  port        = var.tileserv_port
   protocol    = "HTTP"
   vpc_id      = aws_vpc.main.id
   target_type = "ip"
@@ -70,7 +70,7 @@ resource "aws_lb_target_group" "tileserv" {
     enabled             = true
     path                = "/public.courts/0/0/0.pbf"
     protocol            = "HTTP"
-    port                = tostring(var.tileserv_nginx_port)
+    port                = tostring(var.tileserv_port)
     healthy_threshold   = 2
     unhealthy_threshold = 3
     timeout             = 5
@@ -231,6 +231,16 @@ resource "aws_lb_listener_rule" "tileserv" {
   condition {
     path_pattern { values = ["/api/map-tiles/*"] }
   }
+
+  transform {
+    type = "url-rewrite"
+    url_rewrite_config {
+      rewrite {
+        regex   = "^/api/map-tiles/(.*)$"
+        replace = "/public.courts/$1"
+      }
+    }
+  }
 }
 
 # Local/non-DNS deployments keep the ALB on HTTP, so route map tiles there too.
@@ -246,6 +256,16 @@ resource "aws_lb_listener_rule" "tileserv_http" {
 
   condition {
     path_pattern { values = ["/api/map-tiles/*"] }
+  }
+
+  transform {
+    type = "url-rewrite"
+    url_rewrite_config {
+      rewrite {
+        regex   = "^/api/map-tiles/(.*)$"
+        replace = "/public.courts/$1"
+      }
+    }
   }
 }
 

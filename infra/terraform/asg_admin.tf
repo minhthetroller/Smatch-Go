@@ -39,6 +39,41 @@ resource "aws_iam_role_policy" "admin_firebase_secret" {
   })
 }
 
+resource "aws_iam_role_policy" "admin_s3_access" {
+  name = "s3-runtime-access"
+  role = aws_iam_role.admin.name
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "s3:ListBucket"
+        ]
+        Resource = [
+          aws_s3_bucket.profile.arn,
+          aws_s3_bucket.matches.arn,
+          aws_s3_bucket.business_docs.arn
+        ]
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "s3:DeleteObject",
+          "s3:GetObject",
+          "s3:PutObject"
+        ]
+        Resource = [
+          "${aws_s3_bucket.profile.arn}/*",
+          "${aws_s3_bucket.matches.arn}/*",
+          "${aws_s3_bucket.business_docs.arn}/*"
+        ]
+      }
+    ]
+  })
+}
+
 resource "aws_iam_instance_profile" "admin" {
   name = "${var.app_name}-admin-ec2-profile"
   role = aws_iam_role.admin.name
@@ -62,29 +97,32 @@ resource "aws_launch_template" "admin" {
   }
 
   user_data = base64encode(templatefile("${path.module}/user_data.sh.tpl", {
-    aws_region                = var.aws_region
-    ecr_repo_url              = var.ecr_repo_url
-    image_tag                 = "admin"
-    backend_port              = var.backend_port
-    database_url              = "postgresql://${var.db_username}:${var.db_password}@${aws_db_instance.main.address}:${aws_db_instance.main.port}/${var.db_name}?sslmode=require"
-    redis_host                = aws_elasticache_cluster.main.cache_nodes[0].address
-    redis_port                = tostring(aws_elasticache_cluster.main.port)
-    redis_password            = var.redis_password
-    s3_bucket_profile         = aws_s3_bucket.profile.bucket
-    s3_bucket_matches         = aws_s3_bucket.matches.bucket
-    s3_bucket_business_docs   = aws_s3_bucket.business_docs.bucket
-    zalopay_app_id            = var.zalopay_app_id
-    zalopay_key1              = var.zalopay_key1
-    zalopay_key2              = var.zalopay_key2
-    zalopay_endpoint          = var.zalopay_endpoint
-    zalopay_callback_url      = var.zalopay_callback_url
-    tile_server_url           = var.tile_server_url
-    admin_secret              = var.admin_secret
-    admin_web_origin          = var.admin_domain_name != "" ? "https://${var.admin_domain_name}" : ""
-    rate_limit_trusted_ips    = var.rate_limit_trusted_ips
-    load_test_stress_enabled  = "false"
-    cloudwatch_log_group_name = aws_cloudwatch_log_group.admin.name
-    service_name              = "admin"
+    aws_region                                     = var.aws_region
+    ecr_repo_url                                   = var.ecr_repo_url
+    image_tag                                      = "admin"
+    backend_port                                   = var.backend_port
+    database_url                                   = "postgresql://${var.db_username}:${var.db_password}@${aws_db_instance.main.address}:${aws_db_instance.main.port}/${var.db_name}?sslmode=require"
+    redis_host                                     = aws_elasticache_cluster.main.cache_nodes[0].address
+    redis_port                                     = tostring(aws_elasticache_cluster.main.port)
+    redis_password                                 = var.redis_password
+    s3_bucket_profile                              = aws_s3_bucket.profile.bucket
+    s3_bucket_matches                              = aws_s3_bucket.matches.bucket
+    s3_bucket_business_docs                        = aws_s3_bucket.business_docs.bucket
+    zalopay_app_id                                 = var.zalopay_app_id
+    zalopay_key1                                   = var.zalopay_key1
+    zalopay_key2                                   = var.zalopay_key2
+    zalopay_endpoint                               = var.zalopay_endpoint
+    zalopay_callback_url                           = var.zalopay_callback_url
+    tile_server_url                                = var.tile_server_url
+    admin_secret                                   = var.admin_secret
+    admin_web_origin                               = var.admin_domain_name != "" ? "https://${var.admin_domain_name}" : ""
+    rate_limit_trusted_ips                         = var.rate_limit_trusted_ips
+    load_test_stress_enabled                       = "false"
+    cloudwatch_log_group_name                      = aws_cloudwatch_log_group.admin.name
+    service_name                                   = "admin"
+    container_cpu_limit                            = ""
+    cloudwatch_cpu_metrics_enabled                 = false
+    cloudwatch_metrics_collection_interval_seconds = 60
   }))
 
   lifecycle {
