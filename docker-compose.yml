@@ -5,7 +5,7 @@ networks:
 services:
 
   postgres:
-    image: postgres:15
+    image: postgis/postgis:15-3.4
     environment:
       POSTGRES_DB: smatch
       POSTGRES_USER: postgres
