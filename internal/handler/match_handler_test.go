@@ -8,6 +8,10 @@ import (
 	"github.com/smatch/badminton-backend/internal/repository"
 )
 
+func newTestMatchHandler() *MatchHandler {
+	return &MatchHandler{images: testResolver}
+}
+
 func TestMapMatchRowToDTO(t *testing.T) {
 	firstName := "John"
 	lastName := "Doe"
@@ -44,7 +48,8 @@ func TestMapMatchRowToDTO(t *testing.T) {
 		SlotsAccepted:   2,
 	}
 
-	resp := mapMatchRowToDTO(mr)
+	h := newTestMatchHandler()
+	resp := h.mapMatchRowToDTO(mr)
 
 	if resp.ID != "match-1" {
 		t.Errorf("ID = %q, want match-1", resp.ID)
@@ -70,6 +75,9 @@ func TestMapMatchRowToDTO(t *testing.T) {
 	if len(resp.Images) != 2 {
 		t.Errorf("Images length = %d, want 2", len(resp.Images))
 	}
+	if resp.Images[0] != "http://localhost:4566/smatch-matches/img1.jpg" {
+		t.Errorf("Images[0] = %q, want resolved URL", resp.Images[0])
+	}
 }
 
 func TestMapMatchRowToDTO_NilImages(t *testing.T) {
@@ -83,7 +91,8 @@ func TestMapMatchRowToDTO_NilImages(t *testing.T) {
 		},
 	}
 
-	resp := mapMatchRowToDTO(mr)
+	h := newTestMatchHandler()
+	resp := h.mapMatchRowToDTO(mr)
 
 	// Nil images should become empty array
 	if resp.Images == nil {
@@ -120,7 +129,8 @@ func TestMapPlayerRowToDTO(t *testing.T) {
 		UserPhotoURL:  &photoURL,
 	}
 
-	resp := mapPlayerRowToDTO(p)
+	h := newTestMatchHandler()
+	resp := h.mapPlayerRowToDTO(p)
 
 	if resp.ID != "mp-1" {
 		t.Errorf("ID = %q, want mp-1", resp.ID)
@@ -151,7 +161,8 @@ func TestMapPlayerRowToDTO_NilRespondedAt(t *testing.T) {
 		},
 	}
 
-	resp := mapPlayerRowToDTO(p)
+	h := newTestMatchHandler()
+	resp := h.mapPlayerRowToDTO(p)
 
 	if resp.RespondedAt != nil {
 		t.Errorf("RespondedAt should be nil for pending player, got %v", resp.RespondedAt)
@@ -172,7 +183,8 @@ func TestMapPlayersToDTO(t *testing.T) {
 		},
 	}
 
-	resp := mapPlayersToDTO(players)
+	h := newTestMatchHandler()
+	resp := h.mapPlayersToDTO(players)
 
 	if len(resp) != 2 {
 		t.Errorf("length = %d, want 2", len(resp))

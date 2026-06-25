@@ -19,10 +19,11 @@ type MatchHandler struct {
 	matchRepo    *repository.MatchRepository
 	redisService *service.RedisService
 	hub          *ws.Hub
+	images       ImageURLResolver
 }
 
-func NewMatchHandler(mr *repository.MatchRepository, rs *service.RedisService, hub *ws.Hub) *MatchHandler {
-	return &MatchHandler{matchRepo: mr, redisService: rs, hub: hub}
+func NewMatchHandler(mr *repository.MatchRepository, rs *service.RedisService, hub *ws.Hub, images ImageURLResolver) *MatchHandler {
+	return &MatchHandler{matchRepo: mr, redisService: rs, hub: hub, images: images}
 }
 
 // GET /api/matches
@@ -72,7 +73,7 @@ func (h *MatchHandler) GetAllMatches(w http.ResponseWriter, r *http.Request) {
 
 	resp := make([]dto.MatchResponse, len(matches))
 	for i, m := range matches {
-		resp[i] = mapMatchRowToDTO(m)
+		resp[i] = h.mapMatchRowToDTO(m)
 	}
 	sendPaginated(w, resp, page, limit, total)
 }
@@ -90,7 +91,7 @@ func (h *MatchHandler) GetHostedMatches(w http.ResponseWriter, r *http.Request) 
 
 	resp := make([]dto.MatchResponse, len(matches))
 	for i, m := range matches {
-		resp[i] = mapMatchRowToDTO(m)
+		resp[i] = h.mapMatchRowToDTO(m)
 	}
 	sendSuccess(w, resp, 200)
 }
@@ -108,7 +109,7 @@ func (h *MatchHandler) GetJoinedMatches(w http.ResponseWriter, r *http.Request) 
 
 	resp := make([]dto.MatchResponse, len(matches))
 	for i, m := range matches {
-		resp[i] = mapMatchRowToDTO(m)
+		resp[i] = h.mapMatchRowToDTO(m)
 	}
 	sendSuccess(w, resp, 200)
 }
@@ -129,8 +130,8 @@ func (h *MatchHandler) GetMatch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resp := dto.MatchWithPlayersResponse{
-		MatchResponse: mapMatchRowToDTO(match),
-		Players:       mapPlayersToDTO(players),
+		MatchResponse: h.mapMatchRowToDTO(match),
+		Players:       h.mapPlayersToDTO(players),
 	}
 
 	// If authenticated, attach current user status.
@@ -188,7 +189,7 @@ func (h *MatchHandler) CreateMatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sendSuccess(w, mapMatchRowToDTO(created), 201)
+	sendSuccess(w, h.mapMatchRowToDTO(created), 201)
 }
 
 // PUT /api/matches/:id
@@ -258,7 +259,7 @@ func (h *MatchHandler) UpdateMatch(w http.ResponseWriter, r *http.Request) {
 		sendError(w, "Failed to update match", "INTERNAL_ERROR", 500)
 		return
 	}
-	sendSuccess(w, mapMatchRowToDTO(updated), 200)
+	sendSuccess(w, h.mapMatchRowToDTO(updated), 200)
 }
 
 // DELETE /api/matches/:id - sets status=CANCELLED
@@ -415,7 +416,7 @@ func (h *MatchHandler) JoinMatch(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	sendSuccess(w, mapPlayerRowToDTO(player), 201)
+	sendSuccess(w, h.mapPlayerRowToDTO(player), 201)
 }
 
 // DELETE /api/matches/:id/leave
@@ -492,7 +493,7 @@ func (h *MatchHandler) GetJoinRequests(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp := mapPlayersToDTO(players)
+	resp := h.mapPlayersToDTO(players)
 	if resp == nil {
 		resp = []dto.MatchPlayerResponse{}
 	}
@@ -608,12 +609,12 @@ func (h *MatchHandler) RespondToJoinRequest(w http.ResponseWriter, r *http.Reque
 		Message:  msg,
 	})
 
-	sendSuccess(w, mapPlayerRowToDTO(updated), 200)
+	sendSuccess(w, h.mapPlayerRowToDTO(updated), 200)
 }
 
 // ==================== Mapping helpers ====================
 
-func mapMatchRowToDTO(m *repository.MatchRow) dto.MatchResponse {
+func (h *MatchHandler) mapMatchRowToDTO(m *repository.MatchRow) dto.MatchResponse {
 	resp := dto.MatchResponse{
 		ID:            m.ID,
 		CourtID:       m.CourtID,
@@ -623,7 +624,7 @@ func mapMatchRowToDTO(m *repository.MatchRow) dto.MatchResponse {
 		HostName:      buildDisplayName(m.HostFirstName, m.HostLastName, m.HostUsername),
 		Title:         m.Title,
 		Description:   m.Description,
-		Images:        m.Images,
+		Images:        h.resolveMatchImages(m.Images),
 		SkillLevel:    string(m.SkillLevel),
 		ShuttleType:   string(m.ShuttleType),
 		PlayerFormat:  string(m.PlayerFormat),
@@ -644,21 +645,32 @@ func mapMatchRowToDTO(m *repository.MatchRow) dto.MatchResponse {
 	return resp
 }
 
-func mapPlayersToDTO(players []*repository.MatchPlayerRow) []dto.MatchPlayerResponse {
+func (h *MatchHandler) resolveMatchImages(keys []string) []string {
+	if len(keys) == 0 {
+		return nil
+	}
+	resolved := make([]string, len(keys))
+	for i, k := range keys {
+		resolved[i] = h.images.Match(k)
+	}
+	return resolved
+}
+
+func (h *MatchHandler) mapPlayersToDTO(players []*repository.MatchPlayerRow) []dto.MatchPlayerResponse {
 	resp := make([]dto.MatchPlayerResponse, len(players))
 	for i, p := range players {
-		resp[i] = mapPlayerRowToDTO(p)
+		resp[i] = h.mapPlayerRowToDTO(p)
 	}
 	return resp
 }
 
-func mapPlayerRowToDTO(p *repository.MatchPlayerRow) dto.MatchPlayerResponse {
+func (h *MatchHandler) mapPlayerRowToDTO(p *repository.MatchPlayerRow) dto.MatchPlayerResponse {
 	r := dto.MatchPlayerResponse{
 		ID:           p.ID,
 		MatchID:      p.MatchID,
 		UserID:       p.UserID,
 		UserName:     buildDisplayName(p.UserFirstName, p.UserLastName, p.UserUsername),
-		UserPhotoURL: p.UserPhotoURL,
+		UserPhotoURL: h.resolvePlayerPhotoURL(p.UserPhotoURL),
 		Status:       string(p.Status),
 		Message:      p.Message,
 		Position:     p.Position,
@@ -669,6 +681,14 @@ func mapPlayerRowToDTO(p *repository.MatchPlayerRow) dto.MatchPlayerResponse {
 		r.RespondedAt = &s
 	}
 	return r
+}
+
+func (h *MatchHandler) resolvePlayerPhotoURL(photoURL *string) *string {
+	if photoURL == nil || *photoURL == "" {
+		return photoURL
+	}
+	resolved := h.images.Profile(*photoURL)
+	return &resolved
 }
 
 func mapCurrentUserStatus(p *repository.MatchPlayerRow) *dto.CurrentUserStatusResponse {
