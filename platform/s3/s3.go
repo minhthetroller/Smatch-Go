@@ -139,3 +139,31 @@ func (c *Client) DeleteObject(ctx context.Context, bucket, key string) error {
 	})
 	return err
 }
+
+// EnsureBucketPublicRead applies a bucket policy granting s3:GetObject to everyone.
+// This makes all objects in the bucket publicly readable. Idempotent — safe to call on startup.
+func (c *Client) EnsureBucketPublicRead(ctx context.Context, bucket string) error {
+	if bucket == "" {
+		return nil
+	}
+	policy := fmt.Sprintf(`{
+		"Version": "2012-10-17",
+		"Statement": [
+			{
+				"Effect": "Allow",
+				"Principal": "*",
+				"Action": "s3:GetObject",
+				"Resource": "arn:aws:s3:::%s/*"
+			}
+		]
+	}`, bucket)
+
+	_, err := c.s3.PutBucketPolicy(ctx, &s3.PutBucketPolicyInput{
+		Bucket: aws.String(bucket),
+		Policy: aws.String(policy),
+	})
+	if err != nil {
+		return fmt.Errorf("s3: set public-read policy for bucket %q: %w", bucket, err)
+	}
+	return nil
+}
