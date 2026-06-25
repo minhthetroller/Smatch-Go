@@ -16,6 +16,7 @@ import (
 type s3Uploader interface {
 	PutObject(ctx context.Context, bucket, key string, body io.Reader, contentType string) error
 	PutObjectEncrypted(ctx context.Context, bucket, key string, body io.Reader, contentType string) error
+	DeleteObject(ctx context.Context, bucket, key string) error
 }
 
 type UploadService struct {
@@ -70,5 +71,29 @@ func (s *UploadService) UploadMatchImage(ctx context.Context, file multipart.Fil
 		return "", &domain.AppError{Code: "UPLOAD_FAILED", Message: "Failed to upload image", Status: 500, Err: err}
 	}
 
-	return fmt.Sprintf("https://%s.s3.amazonaws.com/%s", s.bucket, key), nil
+	return key, nil
+}
+
+// UploadProfilePhoto uploads a profile photo for a user and deletes the previous photo if any.
+// Returns the S3 key (not a full URL).
+func (s *UploadService) UploadProfilePhoto(ctx context.Context, userID, oldKey string, file multipart.File, header *multipart.FileHeader) (string, error) {
+	ext := strings.ToLower(filepath.Ext(header.Filename))
+	contentType, ok := allowedImageExts[ext]
+	if !ok {
+		return "", domain.BadRequest("Unsupported image type. Allowed: jpg, jpeg, png")
+	}
+
+	key := fmt.Sprintf("profile/%s/%s-%d%s", userID, uuid.New().String(), time.Now().Unix(), ext)
+
+	if err := s.s3.PutObject(ctx, s.bucket, key, file, contentType); err != nil {
+		return "", &domain.AppError{Code: "UPLOAD_FAILED", Message: "Failed to upload profile photo", Status: 500, Err: err}
+	}
+
+	if oldKey != "" {
+		if err := s.s3.DeleteObject(ctx, s.bucket, oldKey); err != nil {
+			fmt.Printf("[upload] warning: failed to delete old profile photo %q: %v\n", oldKey, err)
+		}
+	}
+
+	return key, nil
 }
