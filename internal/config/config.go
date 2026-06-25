@@ -37,13 +37,15 @@ type Config struct {
 	FirebaseCredentialsFile string
 
 	AWS struct {
-		Region             string
-		AccessKeyID        string
-		SecretAccessKey    string
-		Endpoint           string // optional: LocalStack override
-		BucketProfile      string
-		BucketMatches      string
-		BucketBusinessDocs string
+		Region               string
+		AccessKeyID          string
+		SecretAccessKey      string
+		Endpoint             string // optional: LocalStack override
+		BucketProfile        string
+		BucketMatches        string
+		BucketBusinessDocs   string
+		PublicBaseURLMatches string // optional: CDN base for match image URLs (defaults to S3 endpoint)
+		PublicBaseURLProfile string // optional: CDN base for profile photo URLs (defaults to S3 endpoint)
 	}
 
 	AdminSecret    string
@@ -95,6 +97,8 @@ func Load() *Config {
 	cfg.AWS.BucketProfile = getEnv("AWS_S3_BUCKET_PROFILE", "smatch-profiles")
 	cfg.AWS.BucketMatches = getEnv("AWS_S3_BUCKET_MATCHES", "smatch-matches")
 	cfg.AWS.BucketBusinessDocs = getEnv("AWS_S3_BUCKET_BUSINESS_DOCS", "smatch-business-docs")
+	cfg.AWS.PublicBaseURLMatches = getEnv("AWS_S3_PUBLIC_BASE_URL_MATCHES", "")
+	cfg.AWS.PublicBaseURLProfile = getEnv("AWS_S3_PUBLIC_BASE_URL_PROFILE", "")
 
 	cfg.AdminSecret = getEnv("ADMIN_SECRET", "")
 	cfg.AdminPort = getEnvInt("ADMIN_PORT", 3001)
