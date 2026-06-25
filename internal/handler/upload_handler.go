@@ -14,10 +14,11 @@ type matchImageUploader interface {
 
 type UploadHandler struct {
 	upload matchImageUploader
+	images ImageURLResolver
 }
 
-func NewUploadHandler(upload matchImageUploader) *UploadHandler {
-	return &UploadHandler{upload: upload}
+func NewUploadHandler(upload matchImageUploader, images ImageURLResolver) *UploadHandler {
+	return &UploadHandler{upload: upload, images: images}
 }
 
 const maxUploadSize = 5 << 20
@@ -40,14 +41,15 @@ func (h *UploadHandler) UploadMatchImage(w http.ResponseWriter, r *http.Request)
 	}
 	defer file.Close()
 
-	url, err := h.upload.UploadMatchImage(r.Context(), file, header)
+	key, err := h.upload.UploadMatchImage(r.Context(), file, header)
 	if err != nil {
 		sendAppError(w, err)
 		return
 	}
 
 	sendSuccess(w, dto.ImageUploadResponse{
-		URL:      url,
+		Key:      key,
+		URL:      h.images.Match(key),
 		FileName: header.Filename,
 	}, 201)
 }
