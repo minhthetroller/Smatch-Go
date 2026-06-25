@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -80,12 +81,13 @@ func main() {
 
 	// ── S3 ──────────────────────────────────────────────────────────────────
 	s3Client, err := s3pkg.New(ctx, s3pkg.Config{
-		Region:          cfg.AWS.Region,
-		AccessKeyID:     cfg.AWS.AccessKeyID,
-		SecretAccessKey: cfg.AWS.SecretAccessKey,
-		Endpoint:        cfg.AWS.Endpoint,
-		BucketProfile:   cfg.AWS.BucketProfile,
-		BucketMatches:   cfg.AWS.BucketMatches,
+		Region:             cfg.AWS.Region,
+		AccessKeyID:        cfg.AWS.AccessKeyID,
+		SecretAccessKey:    cfg.AWS.SecretAccessKey,
+		Endpoint:           cfg.AWS.Endpoint,
+		BucketProfile:      cfg.AWS.BucketProfile,
+		BucketMatches:      cfg.AWS.BucketMatches,
+		BucketBusinessDocs: cfg.AWS.BucketBusinessDocs,
 	})
 	if err != nil {
 		logger.Warn("s3 unavailable", zap.Error(err))
@@ -94,7 +96,32 @@ func main() {
 		if err := s3Client.EnsureBuckets(ctx, cfg.AWS.BucketProfile, cfg.AWS.BucketMatches); err != nil {
 			logger.Warn("s3 bucket init failed", zap.Error(err))
 		}
+		if err := s3Client.EnsureBucketPublicRead(ctx, cfg.AWS.BucketProfile); err != nil {
+			logger.Warn("s3 public-read policy failed for profile bucket", zap.Error(err))
+		}
+		if err := s3Client.EnsureBucketPublicRead(ctx, cfg.AWS.BucketMatches); err != nil {
+			logger.Warn("s3 public-read policy failed for matches bucket", zap.Error(err))
+		}
 	}
+
+	// ── Image URL Resolver ──────────────────────────────────────────────────
+	matchesBase := cfg.AWS.PublicBaseURLMatches
+	if matchesBase == "" {
+		if cfg.AWS.Endpoint != "" {
+			matchesBase = strings.TrimRight(cfg.AWS.Endpoint, "/") + "/" + cfg.AWS.BucketMatches
+		} else {
+			matchesBase = fmt.Sprintf("https://%s.s3.%s.amazonaws.com", cfg.AWS.BucketMatches, cfg.AWS.Region)
+		}
+	}
+	profileBase := cfg.AWS.PublicBaseURLProfile
+	if profileBase == "" {
+		if cfg.AWS.Endpoint != "" {
+			profileBase = strings.TrimRight(cfg.AWS.Endpoint, "/") + "/" + cfg.AWS.BucketProfile
+		} else {
+			profileBase = fmt.Sprintf("https://%s.s3.%s.amazonaws.com", cfg.AWS.BucketProfile, cfg.AWS.Region)
+		}
+	}
+	imageResolver := handler.NewImageURLResolver(matchesBase, profileBase)
 
 	// ── ZaloPay ─────────────────────────────────────────────────────────────
 	zaloClient := zalopkg.New(zalopkg.Config{
@@ -132,22 +159,24 @@ func main() {
 	authMw := middleware.NewAuthMiddleware(fbClient, userRepo, cfg.AdminSecret)
 
 	// ── Handlers ────────────────────────────────────────────────────────────
-	authH := handler.NewAuthHandler(fbClient, userRepo, availRepo)
+	var matchUploadSvc *service.UploadService
+	var profileUploadSvc *service.UploadService
+	if s3Client != nil {
+		matchUploadSvc = service.NewUploadService(s3Client, cfg.AWS.BucketMatches)
+		profileUploadSvc = service.NewUploadService(s3Client, cfg.AWS.BucketProfile)
+	}
+
+	authH := handler.NewAuthHandler(fbClient, userRepo, availRepo, profileUploadSvc, imageResolver)
 	courtH := handler.NewCourtHandler(courtRepo)
 	availH := handler.NewAvailabilityHandler(availSvc, logger)
-	matchH := handler.NewMatchHandler(matchRepo, redisSvc, hub)
+	matchH := handler.NewMatchHandler(matchRepo, redisSvc, hub, imageResolver)
 	paymentH := handler.NewPaymentHandler(paymentRepo, availRepo, matchRepo, redisSvc, zaloClient, hub, logger,
 		cfg.PaymentWSTicketTTLSec, cfg.Port, cfg.NodeEnv)
 	searchH := handler.NewSearchHandler(redisSvc, searchRepo, courtRepo)
 	proxyH := handler.NewProxyHandler(cfg.TileServerURL, cfg.TileLayerID)
 	wsH := handler.NewWebSocketHandler(hub)
 	loadTestH := handler.NewLoadTestHandler(cfg.LoadTestStressEnabled, cfg.AdminSecret)
-
-	var uploadSvc *service.UploadService
-	if s3Client != nil {
-		uploadSvc = service.NewUploadService(s3Client, cfg.AWS.BucketMatches)
-	}
-	uploadH := handler.NewUploadHandler(uploadSvc)
+	uploadH := handler.NewUploadHandler(matchUploadSvc, imageResolver)
 
 	// ── Wire payment auto-cancel on WS disconnect ────────────────────────────
 	hub.ValidatePaymentTicket = func(ctx context.Context, paymentID, ticket string) (bool, error) {
