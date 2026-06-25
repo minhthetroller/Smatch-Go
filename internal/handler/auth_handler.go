@@ -1,7 +1,9 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
+	"mime/multipart"
 	"net/http"
 	"strconv"
 
@@ -13,14 +15,25 @@ import (
 	firebasepkg "github.com/smatch/badminton-backend/platform/firebase"
 )
 
-type AuthHandler struct {
-	firebase  *firebasepkg.Client
-	userRepo  *repository.UserRepository
-	availRepo *repository.AvailabilityRepository
+type profilePhotoUploader interface {
+	UploadProfilePhoto(ctx context.Context, userID, oldKey string, file multipart.File, header *multipart.FileHeader) (string, error)
 }
 
-func NewAuthHandler(fb *firebasepkg.Client, ur *repository.UserRepository, ar *repository.AvailabilityRepository) *AuthHandler {
-	return &AuthHandler{firebase: fb, userRepo: ur, availRepo: ar}
+type userProfileUpdater interface {
+	UpdateProfile(ctx context.Context, id string, fields map[string]interface{}) (*domain.User, error)
+}
+
+type AuthHandler struct {
+	firebase   *firebasepkg.Client
+	userRepo   *repository.UserRepository
+	availRepo  *repository.AvailabilityRepository
+	upload     profilePhotoUploader
+	profileUpd userProfileUpdater
+	images     ImageURLResolver
+}
+
+func NewAuthHandler(fb *firebasepkg.Client, ur *repository.UserRepository, ar *repository.AvailabilityRepository, upload profilePhotoUploader, images ImageURLResolver) *AuthHandler {
+	return &AuthHandler{firebase: fb, userRepo: ur, availRepo: ar, upload: upload, profileUpd: ur, images: images}
 }
 
 // POST /api/auth/verify - Verify Firebase ID token and upsert user.
@@ -63,7 +76,7 @@ func (h *AuthHandler) Verify(w http.ResponseWriter, r *http.Request) {
 	}
 
 	sendSuccess(w, dto.AuthResponse{
-		User:      mapUserToDTO(created),
+		User:      h.mapUserToDTO(created),
 		IsNewUser: isNew,
 	}, 200)
 }
@@ -88,13 +101,13 @@ func (h *AuthHandler) Anonymous(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sendSuccess(w, dto.AuthResponse{User: mapUserToDTO(created), IsNewUser: isNew}, 201)
+	sendSuccess(w, dto.AuthResponse{User: h.mapUserToDTO(created), IsNewUser: isNew}, 201)
 }
 
 // GET /api/auth/me - Return current authenticated user.
 func (h *AuthHandler) Me(w http.ResponseWriter, r *http.Request) {
 	user := middleware.UserFromContext(r.Context())
-	sendSuccess(w, mapUserToDTO(user), 200)
+	sendSuccess(w, h.mapUserToDTO(user), 200)
 }
 
 // PUT /api/auth/me - Update profile.
@@ -143,7 +156,7 @@ func (h *AuthHandler) UpdateMe(w http.ResponseWriter, r *http.Request) {
 		sendError(w, "Failed to update profile", "INTERNAL_ERROR", 500)
 		return
 	}
-	sendSuccess(w, mapUserToDTO(updated), 200)
+	sendSuccess(w, h.mapUserToDTO(updated), 200)
 }
 
 // POST /api/auth/fcm-token - Add FCM token.
@@ -253,7 +266,7 @@ func (h *AuthHandler) LookupUsername(w http.ResponseWriter, r *http.Request) {
 	sendSuccess(w, dto.UsernameLookupResponse{Username: username, Email: *user.Email}, 200)
 }
 
-func mapUserToDTO(u *domain.User) dto.UserProfileResponse {
+func (h *AuthHandler) mapUserToDTO(u *domain.User) dto.UserProfileResponse {
 	if u == nil {
 		return dto.UserProfileResponse{}
 	}
@@ -268,7 +281,7 @@ func mapUserToDTO(u *domain.User) dto.UserProfileResponse {
 		LastName:    u.LastName,
 		Gender:      u.Gender,
 		PhoneNumber: u.PhoneNumber,
-		PhotoURL:    u.PhotoURL,
+		PhotoURL:    h.resolvePhotoURL(u.PhotoURL),
 		CreatedAt:   u.CreatedAt.Format("2006-01-02T15:04:05.000Z"),
 		UpdatedAt:   u.UpdatedAt.Format("2006-01-02T15:04:05.000Z"),
 	}
@@ -283,6 +296,14 @@ func mapUserToDTO(u *domain.User) dto.UserProfileResponse {
 	return resp
 }
 
+func (h *AuthHandler) resolvePhotoURL(photoURL *string) *string {
+	if photoURL == nil || *photoURL == "" {
+		return photoURL
+	}
+	resolved := h.images.Profile(*photoURL)
+	return &resolved
+}
+
 func splitName(name string) []string {
 	for i := len(name) - 1; i >= 0; i-- {
 		if name[i] == ' ' {
@@ -292,9 +313,45 @@ func splitName(name string) []string {
 	return []string{name}
 }
 
-// POST /api/auth/me/photo - Upload profile photo (stub: S3 upload wired separately)
+// POST /api/auth/me/photo - Upload profile photo
 func (h *AuthHandler) UploadPhoto(w http.ResponseWriter, r *http.Request) {
-	sendError(w, "Photo upload not yet implemented", "NOT_IMPLEMENTED", 501)
+	if h.upload == nil {
+		sendError(w, "Photo upload not available", "UPLOAD_UNAVAILABLE", 503)
+		return
+	}
+
+	if err := r.ParseMultipartForm(maxUploadSize); err != nil {
+		sendError(w, "File too large or invalid form data", "BAD_REQUEST", 400)
+		return
+	}
+
+	file, header, err := r.FormFile("image")
+	if err != nil {
+		sendError(w, "No image file provided", "BAD_REQUEST", 400)
+		return
+	}
+	defer file.Close()
+
+	user := middleware.UserFromContext(r.Context())
+
+	var oldKey string
+	if user.PhotoURL != nil && *user.PhotoURL != "" {
+		oldKey = *user.PhotoURL
+	}
+
+	key, err := h.upload.UploadProfilePhoto(r.Context(), user.ID, oldKey, file, header)
+	if err != nil {
+		sendAppError(w, err)
+		return
+	}
+
+	updated, err := h.profileUpd.UpdateProfile(r.Context(), user.ID, map[string]interface{}{"photo_url": key})
+	if err != nil {
+		sendError(w, "Failed to update profile photo", "INTERNAL_ERROR", 500)
+		return
+	}
+
+	sendSuccess(w, dto.ProfilePhotoUploadResponse{User: h.mapUserToDTO(updated)}, 201)
 }
 
 // POST /api/auth/convert - Convert anonymous user to registered
@@ -339,7 +396,7 @@ func (h *AuthHandler) Convert(w http.ResponseWriter, r *http.Request) {
 		sendError(w, "Failed to convert account", "INTERNAL_ERROR", 500)
 		return
 	}
-	sendSuccess(w, dto.AuthResponse{User: mapUserToDTO(updated), IsNewUser: false}, 200)
+	sendSuccess(w, dto.AuthResponse{User: h.mapUserToDTO(updated), IsNewUser: false}, 200)
 }
 
 // POST /api/auth/link-bookings - Link guest bookings to authenticated user by phone
