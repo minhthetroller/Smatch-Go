@@ -13,16 +13,9 @@ import (
 )
 
 // OpeningHours matches the JSON stored in the DB:
-// {"weekdays": {"open": "05:30", "close": "22:30"}, "weekends": {"open": "05:00", "close": "23:00"}}
-type OpeningHours struct {
-	Weekdays *DayRange `json:"weekdays"`
-	Weekends *DayRange `json:"weekends"`
-}
-
-type DayRange struct {
-	Open  string `json:"open"`
-	Close string `json:"close"`
-}
+// {"mon":"06:00-22:00","tue":"06:00-22:00",...,"sun":"06:00-23:00"}
+// Keys are lowercase 3-letter day abbreviations; values are "HH:MM-HH:MM" range strings.
+type OpeningHours map[string]string
 
 var dayNames = []string{"sun", "mon", "tue", "wed", "thu", "fri", "sat"}
 
@@ -389,18 +382,14 @@ func minutesBetween(start, end string) int {
 }
 
 func ohForDay(oh *OpeningHours, day string) *string {
-	var dr *DayRange
-	switch day {
-	case "mon", "tue", "wed", "thu", "fri":
-		dr = oh.Weekdays
-	case "sat", "sun":
-		dr = oh.Weekends
-	}
-	if dr == nil || dr.Open == "" || dr.Close == "" {
+	if oh == nil {
 		return nil
 	}
-	s := dr.Open + "-" + dr.Close
-	return &s
+	hours, ok := (*oh)[day]
+	if !ok || hours == "" {
+		return nil
+	}
+	return &hours
 }
 
 func splitHours(s string) (string, string) {
