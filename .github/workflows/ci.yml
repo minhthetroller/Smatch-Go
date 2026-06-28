@@ -35,7 +35,8 @@ jobs:
           fi
 
       - name: Run golangci-lint
-        uses: golangci/golangci-lint-action@v6
+        # Changed to v9 for node version 24
+        uses: golangci/golangci-lint-action@v9
         with:
           version: latest
 
