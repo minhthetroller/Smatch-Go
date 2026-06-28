@@ -56,7 +56,7 @@ func (s *BusinessProfileService) SubmitApplication(ctx context.Context, userID s
 		if err != nil {
 			return nil, err
 		}
-		
+
 		err = file.Close()
 		if err != nil {
 			return nil, err
