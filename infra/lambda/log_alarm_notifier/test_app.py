@@ -1,9 +1,11 @@
 import importlib
+import io
 import json
 import os
 import sys
 import types
 import unittest
+from contextlib import redirect_stdout
 
 
 class FakeLogsClient:
@@ -31,8 +33,14 @@ class LambdaAppTest(unittest.TestCase):
     def setUp(self):
         self.logs = FakeLogsClient()
         self.sns = FakeSNSClient()
+
+        def fake_client(name):
+            if name == "logs":
+                return self.logs
+            return self.sns
+
         fake_boto3 = types.SimpleNamespace(
-            client=lambda name: self.logs if name == "logs" else self.sns
+            client=fake_client
         )
         sys.modules["boto3"] = fake_boto3
         os.environ["SNS_TOPIC_ARN"] = "arn:sns"
@@ -41,10 +49,6 @@ class LambdaAppTest(unittest.TestCase):
             "admin": "/logs/admin",
         })
         os.environ["ALARM_SERVICE_MAP_JSON"] = json.dumps({"backend-cpu": "backend"})
-        os.environ["ALARM_SERVICE_PREFIXES_JSON"] = json.dumps({
-            "TargetTracking-smatch-asg-AlarmHigh-": "backend",
-            "TargetTracking-smatch-admin-asg-AlarmHigh-": "admin",
-        })
         os.environ["LOOKBACK_MINUTES"] = "15"
         os.environ["MAX_LOG_EVENTS"] = "10"
         sys.modules.pop("app", None)
@@ -99,12 +103,14 @@ class LambdaAppTest(unittest.TestCase):
             {"events": []},
         ]
 
-        logs = self.app.find_recent_problem_logs("/logs/backend")
+        logs = self.app.find_recent_problem_logs("/logs/backend", {
+            "detail": {"state": {"timestamp": "2026-06-07T00:00:00Z"}}
+        })
 
         self.assertEqual(len(logs), 1)
         self.assertTrue(logs[0]["timeout"])
         filter_patterns = [r.get("filterPattern") for r in self.logs.requests]
-        self.assertIn('{ $.event = "http_request" && $.timeout = true }', filter_patterns)
+        self.assertIn('"\\"timeout\\": true"', filter_patterns)
 
     def test_build_message_includes_summary_and_request_fields(self):
         event = {
@@ -154,6 +160,26 @@ class LambdaAppTest(unittest.TestCase):
         self.assertEqual(len(self.sns.published), 1)
         self.assertIn("No timeout, warn, error, panic, or 5xx logs", self.sns.published[0]["Message"])
 
+    def test_handler_publishes_delayed_alarm_event_without_checking_current_state(self):
+        self.logs.responses = [{"events": []} for _ in range(6)]
+
+        output = io.StringIO()
+        with redirect_stdout(output):
+            result = self.app.handler({
+                "region": "ap-southeast-1",
+                "detail": {
+                    "alarmName": "backend-cpu",
+                    "state": {"value": "ALARM"},
+                    "previousState": {"value": "OK"},
+                },
+            }, None)
+
+        self.assertTrue(result["published"])
+        self.assertEqual(len(self.sns.published), 1)
+        self.assertIn("Alarm: backend-cpu", self.sns.published[0]["Message"])
+        self.assertIn('"msg": "published incident email"', output.getvalue())
+        self.assertIn('"message_id": "m-1"', output.getvalue())
+
     def test_handler_processes_sqs_wrapped_alarm_event(self):
         self.logs.responses = [{"events": []} for _ in range(6)]
         eventbridge_event = {
@@ -188,17 +214,6 @@ class LambdaAppTest(unittest.TestCase):
 
         self.assertEqual(result, {"batchItemFailures": [{"itemIdentifier": "msg-1"}]})
         self.assertEqual(len(self.sns.published), 0)
-
-    def test_resolve_service_uses_target_tracking_prefixes(self):
-        self.assertEqual(
-            self.app.resolve_service("TargetTracking-smatch-asg-AlarmHigh-abc123"),
-            "backend",
-        )
-        self.assertEqual(
-            self.app.resolve_service("TargetTracking-smatch-admin-asg-AlarmHigh-def456"),
-            "admin",
-        )
-
 
 if __name__ == "__main__":
     unittest.main()

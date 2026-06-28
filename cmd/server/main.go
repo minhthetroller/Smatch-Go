@@ -17,6 +17,7 @@ import (
 
 	"github.com/smatch/badminton-backend/internal/config"
 	"github.com/smatch/badminton-backend/internal/handler"
+	"github.com/smatch/badminton-backend/internal/imageurl"
 	"github.com/smatch/badminton-backend/internal/middleware"
 	"github.com/smatch/badminton-backend/internal/repository"
 	"github.com/smatch/badminton-backend/internal/service"
@@ -121,7 +122,7 @@ func main() {
 			profileBase = fmt.Sprintf("https://%s.s3.%s.amazonaws.com", cfg.AWS.BucketProfile, cfg.AWS.Region)
 		}
 	}
-	imageResolver := handler.NewImageURLResolver(matchesBase, profileBase)
+	imageResolver := imageurl.New(matchesBase, profileBase)
 
 	// ── ZaloPay ─────────────────────────────────────────────────────────────
 	zaloClient := zalopkg.New(zalopkg.Config{
@@ -146,6 +147,8 @@ func main() {
 		redisSvc = service.NewRedisService(redisClient, service.PaymentValiditySeconds)
 	}
 	availSvc := service.NewAvailabilityService(availRepo, courtRepo)
+	courtSvc := service.NewCourtService(courtRepo)
+	searchSvc := service.NewSearchService(redisSvc, searchRepo)
 
 	// ── WebSocket Hub ────────────────────────────────────────────────────────
 	hub := ws.NewHub(logger)
@@ -166,13 +169,17 @@ func main() {
 		profileUploadSvc = service.NewUploadService(s3Client, cfg.AWS.BucketProfile)
 	}
 
-	authH := handler.NewAuthHandler(fbClient, userRepo, availRepo, profileUploadSvc, imageResolver)
-	courtH := handler.NewCourtHandler(courtRepo)
+	authSvc := service.NewAuthService(fbClient, userRepo, availRepo, profileUploadSvc, imageResolver)
+	paymentSvc := service.NewPaymentService(paymentRepo, availRepo, matchRepo, redisSvc, zaloClient, hub, logger)
+
+	authH := handler.NewAuthHandler(authSvc)
+	courtH := handler.NewCourtHandler(courtSvc)
 	availH := handler.NewAvailabilityHandler(availSvc, logger)
-	matchH := handler.NewMatchHandler(matchRepo, redisSvc, hub, imageResolver)
-	paymentH := handler.NewPaymentHandler(paymentRepo, availRepo, matchRepo, redisSvc, zaloClient, hub, logger,
+	matchSvc := service.NewMatchService(matchRepo, redisSvc, hub, imageResolver)
+	matchH := handler.NewMatchHandler(matchSvc)
+	paymentH := handler.NewPaymentHandler(paymentSvc, logger,
 		cfg.PaymentWSTicketTTLSec, cfg.Port, cfg.NodeEnv)
-	searchH := handler.NewSearchHandler(redisSvc, searchRepo, courtRepo)
+	searchH := handler.NewSearchHandler(searchSvc)
 	proxyH := handler.NewProxyHandler(cfg.TileServerURL, cfg.TileLayerID)
 	wsH := handler.NewWebSocketHandler(hub)
 	loadTestH := handler.NewLoadTestHandler(cfg.LoadTestStressEnabled, cfg.AdminSecret)

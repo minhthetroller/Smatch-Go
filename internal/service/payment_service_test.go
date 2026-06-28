@@ -40,6 +40,18 @@ func (f *fakePaymentServiceRepo) UpdatePendingStatus(_ context.Context, _ string
 	return f.payment, nil
 }
 
+func (f *fakePaymentServiceRepo) FindLatestPendingByBookingID(context.Context, string) (*domain.Payment, error) {
+	return nil, nil
+}
+
+func (f *fakePaymentServiceRepo) Create(context.Context, *string, *string, domain.PaymentType, string, int) (*domain.Payment, error) {
+	return nil, nil
+}
+
+func (f *fakePaymentServiceRepo) UpdateOrderURL(context.Context, string, string, string) error {
+	return nil
+}
+
 func (f *fakePaymentServiceRepo) UpdatePendingStatusByAppTransID(_ context.Context, _ string, status domain.PaymentStatus, zpTransID *string, callbackData json.RawMessage) (*domain.Payment, error) {
 	return f.UpdatePendingStatus(context.Background(), "", status, zpTransID, callbackData)
 }
@@ -117,6 +129,18 @@ func (f fakePaymentServiceGateway) QueryOrder(context.Context, string) (*zalopay
 	return f.response, f.err
 }
 
+func (fakePaymentServiceGateway) GenerateAppTransID(string) string {
+	return "260520_test001"
+}
+
+func (fakePaymentServiceGateway) CreateOrder(context.Context, zalopay.CreateOrderInput) (*zalopay.CreateOrderResponse, error) {
+	return &zalopay.CreateOrderResponse{ReturnCode: 1, OrderURL: "https://example.test/pay", ZPTransToken: "zp-token"}, nil
+}
+
+func (fakePaymentServiceGateway) VerifyCallback(string, string) (*zalopay.CallbackData, bool) {
+	return nil, false
+}
+
 func TestPaymentServiceEnsureCurrentStatusSettlesMatchPaymentFromZaloPay(t *testing.T) {
 	now := time.Now()
 	matchPlayerID := "player-1"
@@ -143,13 +167,18 @@ func TestPaymentServiceEnsureCurrentStatusSettlesMatchPaymentFromZaloPay(t *test
 			Status:      domain.MatchStatusOpen,
 		}},
 	}
-	svc := NewPaymentService(paymentRepo, nil, matchRepo, nil, fakePaymentServiceGateway{
-		response: &zalopay.QueryOrderResponse{
-			ReturnCode: 1,
-			ZPTransID:  12345,
-			ServerTime: now.Add(time.Minute).UnixMilli(),
+	svc := &PaymentService{
+		paymentRepo: paymentRepo,
+		matchRepo:   matchRepo,
+		zalo: fakePaymentServiceGateway{
+			response: &zalopay.QueryOrderResponse{
+				ReturnCode: 1,
+				ZPTransID:  12345,
+				ServerTime: now.Add(time.Minute).UnixMilli(),
+			},
 		},
-	}, nil, nil)
+		now: time.Now,
+	}
 
 	updated, err := svc.EnsureCurrentStatus(context.Background(), payment.ID)
 	if err != nil {
@@ -187,9 +216,14 @@ func TestPaymentServiceEnsureCurrentStatusExpiresAfterFiveMinutes(t *testing.T) 
 		EndTime:    "10:00",
 		Status:     "pending",
 	}}
-	svc := NewPaymentService(paymentRepo, availability, nil, nil, fakePaymentServiceGateway{
-		response: &zalopay.QueryOrderResponse{ReturnCode: 2, IsProcessing: true},
-	}, nil, nil)
+	svc := &PaymentService{
+		paymentRepo: paymentRepo,
+		availRepo:   availability,
+		zalo: fakePaymentServiceGateway{
+			response: &zalopay.QueryOrderResponse{ReturnCode: 2, IsProcessing: true},
+		},
+		now: time.Now,
+	}
 
 	updated, err := svc.EnsureCurrentStatus(context.Background(), payment.ID)
 	if err != nil {

@@ -12,7 +12,6 @@ sns_client = boto3.client("sns")
 SNS_TOPIC_ARN = os.environ["SNS_TOPIC_ARN"]
 LOG_GROUPS = json.loads(os.environ.get("LOG_GROUPS_JSON", "{}"))
 ALARM_SERVICE_MAP = json.loads(os.environ.get("ALARM_SERVICE_MAP_JSON", "{}"))
-ALARM_SERVICE_PREFIXES = json.loads(os.environ.get("ALARM_SERVICE_PREFIXES_JSON", "{}"))
 LOOKBACK_MINUTES = int(os.environ.get("LOOKBACK_MINUTES", "15"))
 MAX_LOG_EVENTS = int(os.environ.get("MAX_LOG_EVENTS", "25"))
 
@@ -70,6 +69,7 @@ def decode_sqs_alarm_event(body):
 def process_alarm_event(event):
     detail = event.get("detail", {})
     alarm_name = detail.get("alarmName", "unknown-alarm")
+
     service = resolve_service(alarm_name)
     log_group = LOG_GROUPS.get(service)
 
@@ -94,10 +94,6 @@ def resolve_service(alarm_name):
     if alarm_name in ALARM_SERVICE_MAP:
         return ALARM_SERVICE_MAP[alarm_name]
 
-    for prefix, service in ALARM_SERVICE_PREFIXES.items():
-        if alarm_name.startswith(prefix):
-            return service
-
     return infer_service(alarm_name)
 
 
@@ -111,10 +107,10 @@ def infer_service(alarm_name):
 def find_recent_problem_logs(log_group, event):
     # Default to current time just in case
     end_ms = int(time.time() * 1000)
-    
+
     # Try to grab the exact time the alarm fired from the event payload
     time_str = event.get("detail", {}).get("state", {}).get("timestamp") or event.get("time")
-    
+
     if time_str:
         try:
             # Parse the ISO8601 string from EventBridge
@@ -134,8 +130,6 @@ def find_recent_problem_logs(log_group, event):
                 break
         if len(events_by_key) >= MAX_LOG_EVENTS:
             break
-
-    # (Remember to keep the fallback loop removed as discussed previously to prevent timeouts!)
 
     events = sorted(events_by_key.values(), key=problem_sort_key, reverse=True)
     return events[:MAX_LOG_EVENTS]
@@ -188,7 +182,7 @@ def parse_log_event(event):
 
     # 2. Find and extract the embedded JSON payload at the end of the string
     json_start_idx = message.find('{')
-    
+
     if json_start_idx != -1:
         json_str = message[json_start_idx:]
         try:
@@ -196,7 +190,7 @@ def parse_log_event(event):
             if isinstance(decoded, dict):
                 parsed = decoded
         except json.JSONDecodeError:
-            pass # If it's not valid JSON, we fallback below
+            pass  # If it's not valid JSON, we fallback below
 
     # 3. Extract the Log Level manually since it is in the text part, not the JSON
     if "level" not in parsed:
@@ -221,7 +215,7 @@ def parse_log_event(event):
     parsed["log_stream_name"] = event.get("logStreamName", "")
     parsed["event_id"] = event.get("eventId", "")
     parsed["raw_message"] = raw_message
-    
+
     return parsed
 
 
@@ -354,4 +348,11 @@ def format_log(log):
 
 def publish(alarm_name, service, message):
     subject = f"[smatch] {service} alarm: {alarm_name}"[:100]
-    sns_client.publish(TopicArn=SNS_TOPIC_ARN, Subject=subject, Message=message)
+    response = sns_client.publish(TopicArn=SNS_TOPIC_ARN, Subject=subject, Message=message)
+    print(json.dumps({
+        "level": "info",
+        "msg": "published incident email",
+        "alarm_name": alarm_name,
+        "service": service,
+        "message_id": response.get("MessageId", ""),
+    }))

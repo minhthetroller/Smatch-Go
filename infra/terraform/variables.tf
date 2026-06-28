@@ -402,7 +402,7 @@ variable "lambda_log_lookback_minutes" {
 variable "incident_alarm_queue_delay_seconds" {
   description = "Seconds SQS delays incident alarm delivery before invoking the log notifier Lambda"
   type        = number
-  default     = 600
+  default     = 900
 
   validation {
     condition     = var.incident_alarm_queue_delay_seconds >= 0 && var.incident_alarm_queue_delay_seconds <= 900
@@ -413,8 +413,7 @@ variable "incident_alarm_queue_delay_seconds" {
 variable "incident_alarm_queue_visibility_timeout_seconds" {
   description = "SQS visibility timeout for incident alarm messages"
   type        = number
-  default     = 900 # Increase to 15 minutes to allow more time for the log notifier Lambda to process and prevent premature retries
-                    # Current Lambda timeout is 10 minutes, so this should be set higher to avoid duplicate processing 
+  default     = 3600
 
   validation {
     condition     = var.incident_alarm_queue_visibility_timeout_seconds >= 60 && var.incident_alarm_queue_visibility_timeout_seconds <= 43200

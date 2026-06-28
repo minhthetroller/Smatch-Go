@@ -74,6 +74,11 @@ output "asg_name" {
   value = aws_autoscaling_group.backend.name
 }
 
+output "ecr_repo_url" {
+  description = "ECR repository URL used by backend and admin ASGs."
+  value       = var.ecr_repo_url
+}
+
 output "backend_target_group_arn" {
   description = "Target group ARN for backend ALB target health checks."
   value       = aws_lb_target_group.backend.arn

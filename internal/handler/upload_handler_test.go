@@ -12,6 +12,7 @@ import (
 
 	"github.com/smatch/badminton-backend/internal/domain"
 	"github.com/smatch/badminton-backend/internal/dto"
+	"github.com/smatch/badminton-backend/internal/imageurl"
 )
 
 type stubUploadService struct {
@@ -23,7 +24,7 @@ func (s stubUploadService) UploadMatchImage(_ context.Context, _ multipart.File,
 	return s.key, s.err
 }
 
-var testResolver = NewImageURLResolver("http://localhost:4566/smatch-matches", "http://localhost:4566/smatch-profiles")
+var testResolver = imageurl.New("http://localhost:4566/smatch-matches", "http://localhost:4566/smatch-profiles")
 
 func TestUploadHandler_NilUploadService(t *testing.T) {
 	h := NewUploadHandler(nil, testResolver)

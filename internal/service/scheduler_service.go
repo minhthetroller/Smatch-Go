@@ -26,11 +26,7 @@ func NewSchedulerService(
 	zalo *zalopay.Client,
 	redis *RedisService,
 ) *SchedulerService {
-	var locks paymentLockReleaser
-	if redis != nil {
-		locks = redis
-	}
-	payments := NewPaymentService(paymentRepo, availRepo, matchRepo, locks, zalo, hub, logger)
+	payments := NewPaymentService(paymentRepo, availRepo, matchRepo, redis, zalo, hub, logger)
 	return &SchedulerService{
 		logger:    logger,
 		availRepo: availRepo,

@@ -59,7 +59,7 @@ func bookingItemLogFields(items []dto.SingleBookingItem) []zap.Field {
 	return fields
 }
 
-// GET /api/courts/:courtId/availability?date=YYYY-MM-DD
+// GetAvailability GET /api/courts/:courtId/availability?date=YYYY-MM-DD
 func (h *AvailabilityHandler) GetAvailability(w http.ResponseWriter, r *http.Request) {
 	courtID := chi.URLParam(r, "courtId")
 	date := r.URL.Query().Get("date")

@@ -29,15 +29,27 @@ checksum. It performs no database, Redis, S3, or large-memory work.
 
 ## Deploy Backend Changes
 
-Build and push both images because request logging is shared by both servers:
+Packer builds the EC2 runtime AMIs only. The app container still needs to be
+built and pushed to ECR before refreshing the ASGs.
+
+Build and push both images because request logging is shared by both servers.
+The backend ASG currently uses x86_64 instances and expects tag `latest`; the
+admin ASG currently uses arm64 instances and expects tag `admin`:
 
 ```bash
-docker build --build-arg SERVICE=server -t smatch-server .
-docker build --build-arg SERVICE=admin-server -t smatch-admin-server .
-```
+export AWS_REGION=ap-southeast-1
+export ECR_URL=$(terraform -chdir=infra/terraform output -raw ecr_repo_url 2>/dev/null || echo "391767403886.dkr.ecr.ap-southeast-1.amazonaws.com/smatch-backend")
+export GIT_SHA=$(git rev-parse --short HEAD)
 
-Tag and push these images to the ECR repository referenced by `ecr_repo_url`.
-The backend ASG expects tag `latest`; the admin ASG expects tag `admin`.
+aws ecr get-login-password --region "$AWS_REGION" \
+  | docker login --username AWS --password-stdin "$ECR_URL"
+
+docker buildx build --platform linux/amd64 --build-arg SERVICE=server \
+  -t "$ECR_URL:latest" -t "$ECR_URL:server-$GIT_SHA" --push .
+
+docker buildx build --platform linux/arm64 --build-arg SERVICE=admin-server \
+  -t "$ECR_URL:admin" -t "$ECR_URL:admin-$GIT_SHA" --push .
+```
 
 Run Terraform:
 

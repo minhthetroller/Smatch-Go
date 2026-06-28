@@ -6,6 +6,7 @@ import (
 	"net/http"
 
 	"github.com/smatch/badminton-backend/internal/dto"
+	"github.com/smatch/badminton-backend/internal/imageurl"
 )
 
 type matchImageUploader interface {
@@ -14,10 +15,10 @@ type matchImageUploader interface {
 
 type UploadHandler struct {
 	upload matchImageUploader
-	images ImageURLResolver
+	images imageurl.Resolver
 }
 
-func NewUploadHandler(upload matchImageUploader, images ImageURLResolver) *UploadHandler {
+func NewUploadHandler(upload matchImageUploader, images imageurl.Resolver) *UploadHandler {
 	return &UploadHandler{upload: upload, images: images}
 }
 

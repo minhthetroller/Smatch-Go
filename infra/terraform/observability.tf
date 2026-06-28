@@ -26,6 +26,10 @@ resource "aws_iam_role_policy_attachment" "admin_cloudwatch_agent" {
 
 # ── SNS incident topic ───────────────────────────────────────────────────────
 
+locals {
+  log_alarm_notifier_timeout_seconds = 600
+}
+
 resource "aws_sns_topic" "incident_alerts" {
   name = "${var.app_name}-${var.environment}-incident-alerts"
 
@@ -113,7 +117,7 @@ resource "aws_lambda_function" "log_alarm_notifier" {
   role             = aws_iam_role.log_alarm_notifier.arn
   handler          = "app.handler"
   runtime          = "python3.12"
-  timeout          = 600
+  timeout          = local.log_alarm_notifier_timeout_seconds
   memory_size      = 256
   filename         = data.archive_file.log_alarm_notifier.output_path
   source_code_hash = data.archive_file.log_alarm_notifier.output_base64sha256
@@ -128,10 +132,6 @@ resource "aws_lambda_function" "log_alarm_notifier" {
       ALARM_SERVICE_MAP_JSON = jsonencode({
         (aws_cloudwatch_metric_alarm.backend_cpu_high.alarm_name) = "backend"
         (aws_cloudwatch_metric_alarm.admin_cpu_high.alarm_name)   = "admin"
-      })
-      ALARM_SERVICE_PREFIXES_JSON = jsonencode({
-        "TargetTracking-${aws_autoscaling_group.backend.name}-AlarmHigh-" = "backend"
-        "TargetTracking-${aws_autoscaling_group.admin.name}-AlarmHigh-"   = "admin"
       })
       LOOKBACK_MINUTES = tostring(var.lambda_log_lookback_minutes)
     }
@@ -157,8 +157,15 @@ resource "aws_sqs_queue" "incident_alarm" {
 
   redrive_policy = jsonencode({
     deadLetterTargetArn = aws_sqs_queue.incident_alarm_dlq.arn
-    maxReceiveCount     = 3
+    maxReceiveCount     = 5
   })
+
+  lifecycle {
+    precondition {
+      condition     = var.incident_alarm_queue_visibility_timeout_seconds >= local.log_alarm_notifier_timeout_seconds * 6
+      error_message = "incident_alarm_queue_visibility_timeout_seconds must be at least six times the Lambda timeout for SQS event source mappings."
+    }
+  }
 
   tags = { Name = "${var.app_name}-incident-alarm-delay" }
 }
@@ -250,9 +257,7 @@ resource "aws_cloudwatch_event_rule" "cpu_alarm_to_queue" {
     detail = {
       alarmName = [
         aws_cloudwatch_metric_alarm.backend_cpu_high.alarm_name,
-        aws_cloudwatch_metric_alarm.admin_cpu_high.alarm_name,
-        { prefix = "TargetTracking-${aws_autoscaling_group.backend.name}-AlarmHigh-" },
-        { prefix = "TargetTracking-${aws_autoscaling_group.admin.name}-AlarmHigh-" }
+        aws_cloudwatch_metric_alarm.admin_cpu_high.alarm_name
       ]
       state = {
         value = ["ALARM"]

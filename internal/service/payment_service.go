@@ -22,9 +22,12 @@ const (
 type paymentRepository interface {
 	FindByID(ctx context.Context, id string) (*domain.Payment, error)
 	FindByAppTransID(ctx context.Context, appTransID string) (*domain.Payment, error)
-	FindPendingPayments(ctx context.Context) ([]*domain.Payment, error)
+	FindLatestPendingByBookingID(ctx context.Context, bookingID string) (*domain.Payment, error)
+	Create(ctx context.Context, bookingID *string, matchPlayerID *string, paymentType domain.PaymentType, appTransID string, amount int) (*domain.Payment, error)
+	UpdateOrderURL(ctx context.Context, id, orderURL, zpTransToken string) error
 	UpdatePendingStatus(ctx context.Context, id string, status domain.PaymentStatus, zpTransID *string, callbackData json.RawMessage) (*domain.Payment, error)
 	UpdatePendingStatusByAppTransID(ctx context.Context, appTransID string, status domain.PaymentStatus, zpTransID *string, callbackData json.RawMessage) (*domain.Payment, error)
+	FindPendingPayments(ctx context.Context) ([]*domain.Payment, error)
 }
 
 type paymentAvailabilityRepository interface {
@@ -44,48 +47,66 @@ type paymentMatchRepository interface {
 	MarkExpiredMatchPlayers(ctx context.Context, playerIDs []string) error
 }
 
-type paymentLockReleaser interface {
-	ReleaseSlotLocks(ctx context.Context, slots []SlotLockSpec)
+type paymentGateway interface {
+	GenerateAppTransID(bookingID string) string
+	CreateOrder(ctx context.Context, input zalopay.CreateOrderInput) (*zalopay.CreateOrderResponse, error)
+	QueryOrder(ctx context.Context, appTransID string) (*zalopay.QueryOrderResponse, error)
+	VerifyCallback(data, mac string) (*zalopay.CallbackData, bool)
 }
 
-type paymentOrderQuerier interface {
-	QueryOrder(ctx context.Context, appTransID string) (*zalopay.QueryOrderResponse, error)
+// paymentLocker provides Redis-backed slot locking and payment WS tickets.
+// All methods are no-ops when the Redis backend is unavailable (nil interface).
+type paymentLocker interface {
+	AcquireSlotLocks(ctx context.Context, slots []SlotLockSpec) (bool, error)
+	ReleaseSlotLocks(ctx context.Context, slots []SlotLockSpec)
+	CreatePaymentWSTicket(ctx context.Context, paymentID string, ttl time.Duration) (string, error)
 }
 
 // PaymentService centralizes payment settlement, expiry, side effects, and notifications.
 type PaymentService struct {
-	paymentRepo paymentRepository
-	availRepo   paymentAvailabilityRepository
-	matchRepo   paymentMatchRepository
-	redis       paymentLockReleaser
-	zalo        paymentOrderQuerier
-	hub         *ws.Hub
-	logger      *zap.Logger
-	now         func() time.Time
+	paymentRepo        paymentRepository
+	availRepo          paymentAvailabilityRepository
+	matchRepo          paymentMatchRepository
+	redis              paymentLocker
+	zalo               paymentGateway
+	hub                *ws.Hub
+	logger             *zap.Logger
+	now                func() time.Time
+	paymentWSTicketTTL int
 }
 
 func NewPaymentService(
 	paymentRepo paymentRepository,
 	availRepo paymentAvailabilityRepository,
 	matchRepo paymentMatchRepository,
-	redis paymentLockReleaser,
-	zalo paymentOrderQuerier,
+	redis *RedisService,
+	zalo *zalopay.Client,
 	hub *ws.Hub,
 	logger *zap.Logger,
 ) *PaymentService {
 	if logger == nil {
 		logger = zap.NewNop()
 	}
+	var locker paymentLocker
+	if redis != nil {
+		locker = redis
+	}
 	return &PaymentService{
 		paymentRepo: paymentRepo,
 		availRepo:   availRepo,
 		matchRepo:   matchRepo,
-		redis:       redis,
+		redis:       locker,
 		zalo:        zalo,
 		hub:         hub,
 		logger:      logger,
 		now:         time.Now,
 	}
+}
+
+// SetPaymentWSTicketTTL configures the TTL (seconds) for payment WebSocket tickets.
+// When unset (or <= 0) a 60s default is used at creation time.
+func (s *PaymentService) SetPaymentWSTicketTTL(ttl int) {
+	s.paymentWSTicketTTL = ttl
 }
 
 func (s *PaymentService) ExpireAt(p *domain.Payment) time.Time {
