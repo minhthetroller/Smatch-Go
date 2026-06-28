@@ -30,8 +30,8 @@ type RedisService struct {
 	ttlSec int
 }
 
-func NewRedisService(client *goredis.Client, slotLockTTL int) *RedisService {
-	return &RedisService{client: client, ttlSec: slotLockTTL}
+func NewRedisService(client *goredis.Client, ttlSec int) *RedisService {
+	return &RedisService{client: client, ttlSec: ttlSec}
 }
 
 func (s *RedisService) slotKey(subCourtID, date, startTime, endTime string) string {

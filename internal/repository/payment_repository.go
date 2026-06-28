@@ -3,7 +3,6 @@ package repository
 import (
 	"context"
 	"encoding/json"
-	"strconv"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -91,90 +90,35 @@ func (r *PaymentRepository) UpdateOrderURL(ctx context.Context, id, orderURL, zp
 	return err
 }
 
-// UpdateStatus sets payment status and optionally the ZaloPay transaction ID.
-func (r *PaymentRepository) UpdateStatus(ctx context.Context, id string, status domain.PaymentStatus, zpTransID *string, callbackData json.RawMessage) error {
-	_, err := r.db.Exec(ctx, `
-		UPDATE payments
-		SET status = $2, zp_trans_id = $3, callback_data = $4, updated_at = NOW()
-		WHERE id = $1::uuid
-	`, id, string(status), zpTransID, []byte(callbackData))
-	return err
-}
-
-// UpdateStatusByAppTransID updates payment by app_trans_id (for callback processing).
-func (r *PaymentRepository) UpdateStatusByAppTransID(ctx context.Context, appTransID string, status domain.PaymentStatus, zpTransID *string, callbackData json.RawMessage) (*domain.Payment, error) {
+// UpdatePendingStatus updates a payment only if it is still pending.
+func (r *PaymentRepository) UpdatePendingStatus(ctx context.Context, id string, status domain.PaymentStatus, zpTransID *string, callbackData json.RawMessage) (*domain.Payment, error) {
 	return scanPayment(r.db.QueryRow(ctx, `
 		UPDATE payments
 		SET status = $2, zp_trans_id = $3, callback_data = $4, updated_at = NOW()
-		WHERE app_trans_id = $1
+		WHERE id = $1::uuid AND status = 'pending'
+		RETURNING `+paymentCols,
+		id, string(status), zpTransID, []byte(callbackData)))
+}
+
+// UpdatePendingStatusByAppTransID updates payment by app_trans_id only if it is still pending.
+func (r *PaymentRepository) UpdatePendingStatusByAppTransID(ctx context.Context, appTransID string, status domain.PaymentStatus, zpTransID *string, callbackData json.RawMessage) (*domain.Payment, error) {
+	return scanPayment(r.db.QueryRow(ctx, `
+		UPDATE payments
+		SET status = $2, zp_trans_id = $3, callback_data = $4, updated_at = NOW()
+		WHERE app_trans_id = $1 AND status = 'pending'
 		RETURNING `+paymentCols,
 		appTransID, string(status), zpTransID, []byte(callbackData)))
 }
 
-// FindStalePendingBookingPayments returns pending BOOKING payments older than minAgeSec
-// but not older than maxAgeSec, for reconciliation with ZaloPay.
-func (r *PaymentRepository) FindStalePendingBookingPayments(ctx context.Context, minAgeSec, maxAgeSec int) ([]*domain.Payment, error) {
+// FindPendingPayments returns all pending payments for reconciliation/expiry.
+func (r *PaymentRepository) FindPendingPayments(ctx context.Context) ([]*domain.Payment, error) {
 	rows, err := r.db.Query(ctx, `
 		SELECT `+paymentCols+`
 		FROM payments
-		WHERE payment_type = 'BOOKING'
-		  AND status = 'pending'
-		  AND created_at < NOW() - ($1 || ' seconds')::interval
-		  AND created_at > NOW() - ($2 || ' seconds')::interval
+		WHERE status = 'pending'
+		  AND payment_type IN ('BOOKING', 'MATCH_JOIN')
 		ORDER BY created_at ASC
-	`, strconv.Itoa(minAgeSec), strconv.Itoa(maxAgeSec))
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var result []*domain.Payment
-	for rows.Next() {
-		p, err := scanPayment(rows)
-		if err != nil {
-			return nil, err
-		}
-		result = append(result, p)
-	}
-	return result, rows.Err()
-}
-
-// MarkExpiredBookingPayments marks old pending BOOKING payments as expired.
-func (r *PaymentRepository) MarkExpiredBookingPayments(ctx context.Context, timeoutSec int) ([]*domain.Payment, error) {
-	rows, err := r.db.Query(ctx, `
-		UPDATE payments
-		SET status = 'expired', updated_at = NOW()
-		WHERE payment_type = 'BOOKING'
-		  AND status = 'pending'
-		  AND created_at < NOW() - ($1 || ' seconds')::interval
-		RETURNING `+paymentCols,
-		strconv.Itoa(timeoutSec))
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var result []*domain.Payment
-	for rows.Next() {
-		p, err := scanPayment(rows)
-		if err != nil {
-			return nil, err
-		}
-		result = append(result, p)
-	}
-	return result, rows.Err()
-}
-
-// MarkExpiredMatchPayments marks old pending MATCH_JOIN payments as expired.
-func (r *PaymentRepository) MarkExpiredMatchPayments(ctx context.Context, timeoutSec int) ([]*domain.Payment, error) {
-	rows, err := r.db.Query(ctx, `
-		UPDATE payments
-		SET status = 'expired', updated_at = NOW()
-		WHERE payment_type = 'MATCH_JOIN'
-		  AND status = 'pending'
-		  AND created_at < NOW() - ($1 || ' seconds')::interval
-		RETURNING `+paymentCols,
-		strconv.Itoa(timeoutSec))
+	`)
 	if err != nil {
 		return nil, err
 	}

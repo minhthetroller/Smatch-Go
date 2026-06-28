@@ -51,11 +51,17 @@ func (s *BusinessProfileService) SubmitApplication(ctx context.Context, userID s
 		if err != nil {
 			return nil, domain.BadRequest("Failed to read uploaded file")
 		}
+
 		url, err := s.upload.UploadDocument(ctx, file, header, "business-profiles/"+userID)
-		file.Close()
 		if err != nil {
 			return nil, err
 		}
+
+		err = file.Close()
+		if err != nil {
+			return nil, err
+		}
+
 		switch field {
 		case "personalIdFront":
 			bp.PersonalIDFrontImageURL = &url

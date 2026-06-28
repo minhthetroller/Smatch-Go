@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 
 	"github.com/smatch/badminton-backend/internal/domain"
@@ -405,5 +406,41 @@ func TestTimeSlotStruct(t *testing.T) {
 	}
 	if slot.StartTime != "06:00" || slot.EndTime != "06:30" || !slot.IsAvailable || slot.Price != 100000 {
 		t.Error("TimeSlot fields not set correctly")
+	}
+}
+
+// TestOpeningHours_ParseFromDBShape is a regression test for the
+// "court is closed on weekdays" bug. The DB stores opening_hours as
+// per-day lowercase keys: {"mon":"06:00-22:00",...,"sun":"06:00-23:00"}.
+// The parser must unmarshal this correctly and ohForDay must return
+// non-nil hours for every day that has a value.
+func TestOpeningHours_ParseFromDBShape(t *testing.T) {
+	raw := []byte(`{"mon":"06:00-22:00","tue":"06:00-22:00","wed":"06:00-22:00","thu":"06:00-22:00","fri":"06:00-22:00","sat":"06:00-23:00","sun":"06:00-23:00"}`)
+
+	var oh OpeningHours
+	if err := json.Unmarshal(raw, &oh); err != nil {
+		t.Fatalf("json.Unmarshal failed: %v", err)
+	}
+
+	days := []string{"mon", "tue", "wed", "thu", "fri", "sat", "sun"}
+	for _, day := range days {
+		got := ohForDay(&oh, day)
+		if got == nil {
+			t.Errorf("ohForDay(oh, %q) = nil, expected non-nil hours (court should be open)", day)
+		}
+	}
+}
+
+// TestOpeningHours_EmptyDayReturnsNil ensures a day with no hours
+// (empty string or missing key) correctly returns nil (closed).
+func TestOpeningHours_EmptyDayReturnsNil(t *testing.T) {
+	raw := []byte(`{"mon":"06:00-22:00","tue":"06:00-22:00"}`)
+	var oh OpeningHours
+	if err := json.Unmarshal(raw, &oh); err != nil {
+		t.Fatalf("json.Unmarshal failed: %v", err)
+	}
+
+	if got := ohForDay(&oh, "wed"); got != nil {
+		t.Errorf("ohForDay(oh, \"wed\") = %q, want nil (no hours for wed)", *got)
 	}
 }

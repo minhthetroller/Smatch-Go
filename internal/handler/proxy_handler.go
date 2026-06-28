@@ -3,7 +3,7 @@ package handler
 import "net/http"
 
 // ProxyHandler is retained as a safety fallback.
-// Tile requests are now routed directly to the pg_tileserv ASG by the ALB
+// Tile requests are now routed directly to the pg_tileserv Fargate service by the ALB
 // via a path-based listener rule on /api/map-tiles/*.
 // If a request somehow bypasses the ALB rule and reaches this handler,
 // return 410 Gone to signal the route is no longer served here.

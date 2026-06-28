@@ -15,7 +15,6 @@ type Config struct {
 	DatabaseURL           string
 	TileServerURL         string
 	TileLayerID           string
-	SlotLockTTLSec        int
 	PaymentWSTicketTTLSec int
 
 	Redis struct {
@@ -38,18 +37,28 @@ type Config struct {
 	FirebaseCredentialsFile string
 
 	AWS struct {
-		Region             string
-		AccessKeyID        string
-		SecretAccessKey    string
-		Endpoint           string // optional: LocalStack override
-		BucketProfile      string
-		BucketMatches      string
-		BucketBusinessDocs string
+		Region               string
+		AccessKeyID          string
+		SecretAccessKey      string
+		Endpoint             string // optional: LocalStack override
+		BucketProfile        string
+		BucketMatches        string
+		BucketBusinessDocs   string
+		PublicBaseURLMatches string // optional: CDN base for match image URLs (defaults to S3 endpoint)
+		PublicBaseURLProfile string // optional: CDN base for profile photo URLs (defaults to S3 endpoint)
 	}
 
 	AdminSecret    string
 	AdminPort      int
 	AdminWebOrigin string
+
+	LoadTestStressEnabled bool
+
+	HTTPTimeout struct {
+		FastMS         int
+		DefaultSeconds int
+		PaymentSeconds int
+	}
 }
 
 func Load() *Config {
@@ -66,7 +75,6 @@ func Load() *Config {
 	cfg.DatabaseURL = getEnv("DATABASE_URL", "")
 	cfg.TileServerURL = getEnv("TILE_SERVER_URL", "http://localhost:7800")
 	cfg.TileLayerID = getEnv("TILE_LAYER_ID", "public.courts")
-	cfg.SlotLockTTLSec = getEnvInt("SLOT_LOCK_TTL_SECONDS", 600)
 	cfg.PaymentWSTicketTTLSec = getEnvInt("PAYMENT_WS_TICKET_TTL_SECONDS", 60)
 
 	cfg.Redis.Host = getEnv("REDIS_HOST", "localhost")
@@ -83,16 +91,22 @@ func Load() *Config {
 	cfg.FirebaseCredentialsFile = getEnv("FIREBASE_CREDENTIALS_FILE", "smatch-badminton-firebase-adminsdk-fbsvc-fb65abab30.json")
 
 	cfg.AWS.Region = getEnv("AWS_REGION", "us-east-1")
-	cfg.AWS.AccessKeyID = getEnv("AWS_ACCESS_KEY_ID", "test")
-	cfg.AWS.SecretAccessKey = getEnv("AWS_SECRET_ACCESS_KEY", "test")
+	cfg.AWS.AccessKeyID = getEnv("AWS_ACCESS_KEY_ID", "")
+	cfg.AWS.SecretAccessKey = getEnv("AWS_SECRET_ACCESS_KEY", "")
 	cfg.AWS.Endpoint = getEnv("AWS_ENDPOINT", "")
 	cfg.AWS.BucketProfile = getEnv("AWS_S3_BUCKET_PROFILE", "smatch-profiles")
 	cfg.AWS.BucketMatches = getEnv("AWS_S3_BUCKET_MATCHES", "smatch-matches")
 	cfg.AWS.BucketBusinessDocs = getEnv("AWS_S3_BUCKET_BUSINESS_DOCS", "smatch-business-docs")
+	cfg.AWS.PublicBaseURLMatches = getEnv("AWS_S3_PUBLIC_BASE_URL_MATCHES", "")
+	cfg.AWS.PublicBaseURLProfile = getEnv("AWS_S3_PUBLIC_BASE_URL_PROFILE", "")
 
 	cfg.AdminSecret = getEnv("ADMIN_SECRET", "")
 	cfg.AdminPort = getEnvInt("ADMIN_PORT", 3001)
 	cfg.AdminWebOrigin = getEnv("ADMIN_WEB_ORIGIN", "https://admin-sb.online")
+	cfg.LoadTestStressEnabled = getEnv("LOAD_TEST_STRESS_ENABLED", "false") == "true"
+	cfg.HTTPTimeout.FastMS = getEnvInt("HTTP_TIMEOUT_FAST_MS", 500)
+	cfg.HTTPTimeout.DefaultSeconds = getEnvInt("HTTP_TIMEOUT_DEFAULT_SECONDS", 5)
+	cfg.HTTPTimeout.PaymentSeconds = getEnvInt("HTTP_TIMEOUT_PAYMENT_SECONDS", 10)
 
 	return cfg
 }

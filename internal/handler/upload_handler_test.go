@@ -12,25 +12,32 @@ import (
 
 	"github.com/smatch/badminton-backend/internal/domain"
 	"github.com/smatch/badminton-backend/internal/dto"
+	"github.com/smatch/badminton-backend/internal/imageurl"
 )
 
 type stubUploadService struct {
-	url string
+	key string
 	err error
 }
 
 func (s stubUploadService) UploadMatchImage(_ context.Context, _ multipart.File, _ *multipart.FileHeader) (string, error) {
-	return s.url, s.err
+	return s.key, s.err
 }
 
+var testResolver = imageurl.New("http://localhost:4566/smatch-matches", "http://localhost:4566/smatch-profiles")
+
 func TestUploadHandler_NilUploadService(t *testing.T) {
-	h := NewUploadHandler(nil)
+	h := NewUploadHandler(nil, testResolver)
 
 	body := &bytes.Buffer{}
 	writer := multipart.NewWriter(body)
 	part, _ := writer.CreateFormFile("image", "test.jpg")
 	_, _ = part.Write([]byte("fake-image-data"))
-	writer.Close()
+	err := writer.Close()
+	if err != nil {
+		t.Fatalf("Unable to close writer: %v", err)
+		return
+	}
 
 	req := httptest.NewRequest(http.MethodPost, "/api/uploads/match-image", body)
 	req.Header.Set("Content-Type", writer.FormDataContentType())
@@ -44,11 +51,15 @@ func TestUploadHandler_NilUploadService(t *testing.T) {
 }
 
 func TestUploadHandler_NoFile(t *testing.T) {
-	h := NewUploadHandler(stubUploadService{})
+	h := NewUploadHandler(stubUploadService{}, testResolver)
 
 	body := &bytes.Buffer{}
 	writer := multipart.NewWriter(body)
-	writer.Close()
+	err := writer.Close()
+	if err != nil {
+		t.Fatalf("Unable to close writer: %v", err)
+		return
+	}
 
 	req := httptest.NewRequest(http.MethodPost, "/api/uploads/match-image", body)
 	req.Header.Set("Content-Type", writer.FormDataContentType())
@@ -62,7 +73,7 @@ func TestUploadHandler_NoFile(t *testing.T) {
 }
 
 func TestUploadHandler_Success(t *testing.T) {
-	h := NewUploadHandler(stubUploadService{url: "http://localhost:4566/smatch-matches/matches/test.jpg"})
+	h := NewUploadHandler(stubUploadService{key: "matches/test.jpg"}, testResolver)
 
 	body := &bytes.Buffer{}
 	writer := multipart.NewWriter(body)
@@ -97,6 +108,9 @@ func TestUploadHandler_Success(t *testing.T) {
 	if !resp.Success {
 		t.Fatal("expected success response")
 	}
+	if resp.Data.Key != "matches/test.jpg" {
+		t.Fatalf("unexpected key %q, want %q", resp.Data.Key, "matches/test.jpg")
+	}
 	if resp.Data.URL != "http://localhost:4566/smatch-matches/matches/test.jpg" {
 		t.Fatalf("unexpected url %q", resp.Data.URL)
 	}
@@ -106,7 +120,7 @@ func TestUploadHandler_Success(t *testing.T) {
 }
 
 func TestUploadHandler_ServiceError(t *testing.T) {
-	h := NewUploadHandler(stubUploadService{err: domain.BadRequest("Unsupported image type")})
+	h := NewUploadHandler(stubUploadService{err: domain.BadRequest("Unsupported image type")}, testResolver)
 
 	body := &bytes.Buffer{}
 	writer := multipart.NewWriter(body)
@@ -136,7 +150,7 @@ func TestUploadHandler_ServiceError(t *testing.T) {
 }
 
 func TestUploadHandler_ServiceGenericError(t *testing.T) {
-	h := NewUploadHandler(stubUploadService{err: errors.New("boom")})
+	h := NewUploadHandler(stubUploadService{err: errors.New("boom")}, testResolver)
 
 	body := &bytes.Buffer{}
 	writer := multipart.NewWriter(body)

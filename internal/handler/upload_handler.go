@@ -2,10 +2,12 @@ package handler
 
 import (
 	"context"
+	"log"
 	"mime/multipart"
 	"net/http"
 
 	"github.com/smatch/badminton-backend/internal/dto"
+	"github.com/smatch/badminton-backend/internal/imageurl"
 )
 
 type matchImageUploader interface {
@@ -14,10 +16,11 @@ type matchImageUploader interface {
 
 type UploadHandler struct {
 	upload matchImageUploader
+	images imageurl.Resolver
 }
 
-func NewUploadHandler(upload matchImageUploader) *UploadHandler {
-	return &UploadHandler{upload: upload}
+func NewUploadHandler(upload matchImageUploader, images imageurl.Resolver) *UploadHandler {
+	return &UploadHandler{upload: upload, images: images}
 }
 
 const maxUploadSize = 5 << 20
@@ -38,16 +41,25 @@ func (h *UploadHandler) UploadMatchImage(w http.ResponseWriter, r *http.Request)
 		sendError(w, "No image file provided", "BAD_REQUEST", 400)
 		return
 	}
-	defer file.Close()
+	defer func(file multipart.File) {
+		err := file.Close()
+		if err != nil {
+			// Send an error internal service
+			// Currently we don't have it
+			// only SendAppError and SendError are available
+			log.Fatalf("Failed to close file: %v", err)
+		}
+	}(file)
 
-	url, err := h.upload.UploadMatchImage(r.Context(), file, header)
+	key, err := h.upload.UploadMatchImage(r.Context(), file, header)
 	if err != nil {
 		sendAppError(w, err)
 		return
 	}
 
 	sendSuccess(w, dto.ImageUploadResponse{
-		URL:      url,
+		Key:      key,
+		URL:      h.images.Match(key),
 		FileName: header.Filename,
 	}, 201)
 }

@@ -14,6 +14,7 @@ type CreateAnonymousRequest struct {
 // ConvertAnonymousRequest from Flutter
 type ConvertAnonymousRequest struct {
 	NewFirebaseUID *string               `json:"newFirebaseUid,omitempty"`
+	IDToken        *string               `json:"idToken,omitempty"`
 	Provider       string                `json:"provider" validate:"required,oneof=google facebook password"`
 	Email          *string               `json:"email,omitempty"`
 	Username       *string               `json:"username,omitempty"`

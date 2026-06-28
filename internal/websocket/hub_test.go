@@ -18,13 +18,23 @@ func TestServePaymentsRejectsDuplicateSubscriber(t *testing.T) {
 	defer server.Close()
 
 	conn1 := dialPaymentWS(t, server.URL, "payment-1", "ticket-payment-1")
-	defer conn1.Close()
+	defer func(conn1 *websocket.Conn) {
+		err := conn1.Close()
+		if err != nil {
+			t.Fatalf("Unable to close the websocket: %v", err)
+		}
+	}(conn1)
 	readPaymentMsg(t, conn1, "connected")
 	readPaymentMsg(t, conn1, "subscribed")
 	readPaymentMsg(t, conn1, "payment_status")
 
 	conn2 := dialPaymentWS(t, server.URL, "payment-1", "ticket-payment-1")
-	defer conn2.Close()
+	defer func(conn2 *websocket.Conn) {
+		err := conn2.Close()
+		if err != nil {
+			t.Fatalf("Unable to close the websocket: %v", err)
+		}
+	}(conn2)
 	readPaymentMsg(t, conn2, "connected")
 	msg := readPaymentMsg(t, conn2, "error")
 	if msg["code"] != "PAYMENT_ALREADY_SUBSCRIBED" {
@@ -71,7 +81,12 @@ func TestServePaymentsRejectsInvalidTicket(t *testing.T) {
 	defer server.Close()
 
 	conn := dialPaymentWS(t, server.URL, "payment-1", "wrong-ticket")
-	defer conn.Close()
+	defer func(conn *websocket.Conn) {
+		err := conn.Close()
+		if err != nil {
+			t.Fatalf("Unable to close the websocket: %v", err)
+		}
+	}(conn)
 	readPaymentMsg(t, conn, "connected")
 	msg := readPaymentMsg(t, conn, "error")
 	if msg["code"] != "INVALID_PAYMENT_WS_TICKET" {

@@ -3,6 +3,7 @@ package websocket
 import (
 	"context"
 	"encoding/json"
+	"log"
 	"net/http"
 	"sync"
 
@@ -250,11 +251,11 @@ func (h *Hub) handlePaymentSubscribe(ctx context.Context, conn *websocket.Conn, 
 		return
 	}
 
-	// Adding mutex to ensure no data race happens
 	h.mu.Lock()
-	defer h.mu.Unlock()
-
-	_ = conn.WriteJSON(map[string]interface{}{"type": "subscribed", "paymentId": paymentID})
+	if h.connPayment[conn] == paymentID {
+		_ = conn.WriteJSON(map[string]interface{}{"type": "subscribed", "paymentId": paymentID})
+	}
+	h.mu.Unlock()
 
 	if h.PaymentStatusSnapshot == nil {
 		return
@@ -267,10 +268,15 @@ func (h *Hub) handlePaymentSubscribe(ctx context.Context, conn *websocket.Conn, 
 	if n == nil {
 		return
 	}
-	_ = conn.WriteJSON(n)
-	if isTerminalPaymentStatus(n.Status) {
-		h.unsubscribePayment(paymentID, conn)
+	h.mu.Lock()
+	if h.paymentConn[paymentID] == conn {
+		_ = conn.WriteJSON(n)
+		if isTerminalPaymentStatus(n.Status) {
+			delete(h.paymentConn, paymentID)
+			delete(h.connPayment, conn)
+		}
 	}
+	h.mu.Unlock()
 }
 
 func (h *Hub) subscribePayment(ctx context.Context, paymentID, ticket string, conn *websocket.Conn) (bool, string, string) {
@@ -339,7 +345,11 @@ func (h *Hub) disconnectPayment(conn *websocket.Conn) {
 	}
 	delete(h.connPayment, conn)
 	h.mu.Unlock()
-	conn.Close()
+	err := conn.Close()
+	if err != nil {
+		log.Fatalln("Failed to close payment websocket connection:", err)
+		return
+	}
 
 	// Auto-cancel pending payments
 	if h.OnPaymentDisconnect != nil && paymentID != "" {
@@ -407,7 +417,11 @@ func (h *Hub) disconnectMatch(conn *websocket.Conn) {
 		}
 	}
 	h.mu.Unlock()
-	conn.Close()
+	err := conn.Close()
+	if err != nil {
+		log.Fatalln("Failed to close match websocket connection:", err)
+		return
+	}
 }
 
 func copyConns(m map[*websocket.Conn]struct{}) map[*websocket.Conn]struct{} {

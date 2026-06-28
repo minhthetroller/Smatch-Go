@@ -148,7 +148,18 @@ func (r *CourtOwnerRepository) CreateCourtFromSpecs(ctx context.Context, ownerID
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck
 
-	openingHours, _ := json.Marshal(specs.OperatingHours)
+	// Expand the single {open, close} pair into per-day entries matching the
+	// canonical opening_hours shape: {"mon":"HH:MM-HH:MM",...,"sun":"HH:MM-HH:MM"}
+	rangeStr := specs.OperatingHours.Open + "-" + specs.OperatingHours.Close
+	openingHours, _ := json.Marshal(map[string]string{
+		"mon": rangeStr,
+		"tue": rangeStr,
+		"wed": rangeStr,
+		"thu": rangeStr,
+		"fri": rangeStr,
+		"sat": rangeStr,
+		"sun": rangeStr,
+	})
 
 	var courtID string
 	err = tx.QueryRow(ctx, `

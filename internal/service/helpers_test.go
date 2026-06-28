@@ -181,8 +181,13 @@ func TestOhForDay(t *testing.T) {
 	weekdayStr := "06:00-22:00"
 	weekendStr := "08:00-20:00"
 	oh := &OpeningHours{
-		Weekdays: &DayRange{Open: "06:00", Close: "22:00"},
-		Weekends: &DayRange{Open: "08:00", Close: "20:00"},
+		"mon": weekdayStr,
+		"tue": weekdayStr,
+		"wed": weekdayStr,
+		"thu": weekdayStr,
+		"fri": weekdayStr,
+		"sat": weekendStr,
+		"sun": weekendStr,
 	}
 
 	tests := []struct {

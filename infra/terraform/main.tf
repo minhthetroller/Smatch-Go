@@ -4,7 +4,11 @@ terraform {
   required_providers {
     aws = {
       source  = "hashicorp/aws"
-      version = "~> 5.0"
+      version = "~> 6.0"
+    }
+    archive = {
+      source  = "hashicorp/archive"
+      version = "~> 2.4"
     }
   }
 }
@@ -14,6 +18,19 @@ terraform {
 provider "aws" {
   region  = var.aws_region
   profile = var.aws_profile # uses ~/.aws/credentials
+
+  default_tags {
+    tags = {
+      Project = "smatch"
+      Env     = var.environment
+    }
+  }
+}
+
+provider "aws" {
+  alias   = "us_east_1"
+  region  = "us-east-1"
+  profile = var.aws_profile
 
   default_tags {
     tags = {
