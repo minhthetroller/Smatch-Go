@@ -2,6 +2,7 @@ package handler
 
 import (
 	"encoding/json"
+	"log"
 	"mime/multipart"
 	"net/http"
 	"strconv"
@@ -177,6 +178,7 @@ func (h *AuthHandler) UploadPhoto(w http.ResponseWriter, r *http.Request) {
 			// Send an error internal service
 			// Currently we don't have it
 			// only SendAppError and SendError are available
+			log.Fatalln("Failed to close file:", err)
 		}
 	}(file)
 
