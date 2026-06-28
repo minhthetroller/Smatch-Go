@@ -3,6 +3,7 @@ package websocket
 import (
 	"context"
 	"encoding/json"
+	"log"
 	"net/http"
 	"sync"
 
@@ -344,7 +345,11 @@ func (h *Hub) disconnectPayment(conn *websocket.Conn) {
 	}
 	delete(h.connPayment, conn)
 	h.mu.Unlock()
-	conn.Close()
+	err := conn.Close()
+	if err != nil {
+		log.Fatalln("Failed to close payment websocket connection:", err)
+		return
+	}
 
 	// Auto-cancel pending payments
 	if h.OnPaymentDisconnect != nil && paymentID != "" {
@@ -412,7 +417,11 @@ func (h *Hub) disconnectMatch(conn *websocket.Conn) {
 		}
 	}
 	h.mu.Unlock()
-	conn.Close()
+	err := conn.Close()
+	if err != nil {
+		log.Fatalln("Failed to close match websocket connection:", err)
+		return
+	}
 }
 
 func copyConns(m map[*websocket.Conn]struct{}) map[*websocket.Conn]struct{} {

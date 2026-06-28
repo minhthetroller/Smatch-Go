@@ -478,11 +478,15 @@ func (s *MatchService) RespondToJoinRequest(ctx context.Context, matchID, player
 	}
 
 	msg := "Your join request has been accepted"
-	if newStatus == domain.MatchPlayerStatusPendingPayment {
+	// Changed from if else statement to tagged switch
+	// for better readability and pass the linter check.
+	switch newStatus {
+	case domain.MatchPlayerStatusPendingPayment:
 		msg = "Your join request has been accepted. Please complete payment."
-	} else if newStatus == domain.MatchPlayerStatusRejected {
+	case domain.MatchPlayerStatusRejected:
 		msg = "Your join request has been rejected"
 	}
+
 	s.notifyUser(player.UserID, ws.MatchRequestResponse{
 		Type:     "match_request_response",
 		MatchID:  matchID,

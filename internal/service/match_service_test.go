@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -256,7 +257,10 @@ func TestBuildDisplayName(t *testing.T) {
 
 func TestMatchService_CreateMatch_InvalidSlots(t *testing.T) {
 	svc := newTestMatchService()
-	_, err := svc.CreateMatch(nil, &dto.CreateMatchRequest{SlotsNeeded: 0, Date: "2026-01-01"}, "user-1")
+	_, err := svc.CreateMatch(
+		context.Background(),
+		&dto.CreateMatchRequest{SlotsNeeded: 0, Date: "2026-01-01"}, // req
+		"user-1")
 	if err == nil {
 		t.Fatal("expected error for slotsNeeded=0")
 	}
@@ -264,7 +268,10 @@ func TestMatchService_CreateMatch_InvalidSlots(t *testing.T) {
 
 func TestMatchService_CreateMatch_InvalidDate(t *testing.T) {
 	svc := newTestMatchService()
-	_, err := svc.CreateMatch(nil, &dto.CreateMatchRequest{SlotsNeeded: 4, Date: "not-a-date"}, "user-1")
+	_, err := svc.CreateMatch(
+		context.Background(),
+		&dto.CreateMatchRequest{SlotsNeeded: 4, Date: "not-a-date"}, // req
+		"user-1")
 	if err == nil {
 		t.Fatal("expected error for invalid date")
 	}

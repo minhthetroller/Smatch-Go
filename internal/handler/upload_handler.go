@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"log"
 	"mime/multipart"
 	"net/http"
 
@@ -40,7 +41,15 @@ func (h *UploadHandler) UploadMatchImage(w http.ResponseWriter, r *http.Request)
 		sendError(w, "No image file provided", "BAD_REQUEST", 400)
 		return
 	}
-	defer file.Close()
+	defer func(file multipart.File) {
+		err := file.Close()
+		if err != nil {
+			// Send an error internal service
+			// Currently we don't have it
+			// only SendAppError and SendError are available
+			log.Fatalf("Failed to close file: %v", err)
+		}
+	}(file)
 
 	key, err := h.upload.UploadMatchImage(r.Context(), file, header)
 	if err != nil {

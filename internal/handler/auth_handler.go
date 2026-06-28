@@ -2,6 +2,7 @@ package handler
 
 import (
 	"encoding/json"
+	"mime/multipart"
 	"net/http"
 	"strconv"
 
@@ -170,7 +171,14 @@ func (h *AuthHandler) UploadPhoto(w http.ResponseWriter, r *http.Request) {
 		sendError(w, "No image file provided", "BAD_REQUEST", 400)
 		return
 	}
-	defer file.Close()
+	defer func(file multipart.File) {
+		err := file.Close()
+		if err != nil {
+			// Send an error internal service
+			// Currently we don't have it
+			// only SendAppError and SendError are available
+		}
+	}(file)
 
 	user := middleware.UserFromContext(r.Context())
 	resp, err := h.svc.UploadProfilePhoto(r.Context(), user, file, header)

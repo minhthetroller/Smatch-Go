@@ -33,7 +33,11 @@ func TestUploadHandler_NilUploadService(t *testing.T) {
 	writer := multipart.NewWriter(body)
 	part, _ := writer.CreateFormFile("image", "test.jpg")
 	_, _ = part.Write([]byte("fake-image-data"))
-	writer.Close()
+	err := writer.Close()
+	if err != nil {
+		t.Fatalf("Unable to close writer: %v", err)
+		return
+	}
 
 	req := httptest.NewRequest(http.MethodPost, "/api/uploads/match-image", body)
 	req.Header.Set("Content-Type", writer.FormDataContentType())
@@ -51,7 +55,11 @@ func TestUploadHandler_NoFile(t *testing.T) {
 
 	body := &bytes.Buffer{}
 	writer := multipart.NewWriter(body)
-	writer.Close()
+	err := writer.Close()
+	if err != nil {
+		t.Fatalf("Unable to close writer: %v", err)
+		return
+	}
 
 	req := httptest.NewRequest(http.MethodPost, "/api/uploads/match-image", body)
 	req.Header.Set("Content-Type", writer.FormDataContentType())

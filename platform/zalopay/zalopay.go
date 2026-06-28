@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"math/rand"
 	"net/http"
 	"strings"
@@ -190,7 +191,12 @@ func (c *Client) CreateOrder(ctx context.Context, input CreateOrderInput) (*Crea
 	if err != nil {
 		return nil, fmt.Errorf("zalopay: create order: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func(Body io.ReadCloser) {
+		err := Body.Close()
+		if err != nil {
+			log.Fatalln("zalopay: Unable to close response body:", err)
+		}
+	}(resp.Body)
 
 	raw, _ := io.ReadAll(resp.Body)
 	var result CreateOrderResponse
@@ -240,7 +246,12 @@ func (c *Client) QueryOrder(ctx context.Context, appTransID string) (*QueryOrder
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func(Body io.ReadCloser) {
+		err := Body.Close()
+		if err != nil {
+			log.Fatalln("zalopay: Unable to close response body:", err)
+		}
+	}(resp.Body)
 
 	raw, _ := io.ReadAll(resp.Body)
 	var result QueryOrderResponse

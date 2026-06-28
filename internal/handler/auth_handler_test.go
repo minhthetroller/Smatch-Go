@@ -53,7 +53,10 @@ func TestAuth_UploadPhoto_NoFile(t *testing.T) {
 	h := newAuthHandlerBoundary()
 	buf := &bytes.Buffer{}
 	writer := multipart.NewWriter(buf)
-	writer.Close()
+	err := writer.Close()
+	if err != nil {
+		return
+	}
 	req := httptest.NewRequest(http.MethodPost, "/api/auth/me/photo", buf)
 	req.Header.Set("Content-Type", writer.FormDataContentType())
 	req = req.WithContext(context.WithValue(req.Context(), middleware.CtxKeyUser, sentinelErrUser))
