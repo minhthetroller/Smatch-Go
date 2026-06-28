@@ -2,12 +2,14 @@ package zalopay
 
 import (
 	"bytes"
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"math/rand"
 	"net/http"
 	"strings"
@@ -53,17 +55,18 @@ func (c *Client) GenerateAppTransID(bookingID string) string {
 
 // CreateOrderRequest is sent to ZaloPay /v2/create.
 type CreateOrderRequest struct {
-	AppID       int    `json:"app_id"`
-	AppUser     string `json:"app_user"`
-	AppTransID  string `json:"app_trans_id"`
-	AppTime     int64  `json:"app_time"`
-	Amount      int    `json:"amount"`
-	Item        string `json:"item"`
-	Description string `json:"description"`
-	EmbedData   string `json:"embed_data"`
-	BankCode    string `json:"bank_code"`
-	MAC         string `json:"mac"`
-	CallbackURL string `json:"callback_url,omitempty"`
+	AppID                 int    `json:"app_id"`
+	AppUser               string `json:"app_user"`
+	AppTransID            string `json:"app_trans_id"`
+	AppTime               int64  `json:"app_time"`
+	ExpireDurationSeconds int64  `json:"expire_duration_seconds,omitempty"`
+	Amount                int    `json:"amount"`
+	Item                  string `json:"item"`
+	Description           string `json:"description"`
+	EmbedData             string `json:"embed_data"`
+	BankCode              string `json:"bank_code"`
+	MAC                   string `json:"mac"`
+	CallbackURL           string `json:"callback_url,omitempty"`
 }
 
 // CreateOrderResponse from ZaloPay /v2/create.
@@ -79,22 +82,33 @@ type CreateOrderResponse struct {
 
 // CallbackData parsed from ZaloPay callback.
 type CallbackData struct {
-	AppID       int    `json:"app_id"`
-	AppTransID  string `json:"app_trans_id"`
-	AppTime     int64  `json:"app_time"`
-	AppUser     string `json:"app_user"`
-	Amount      int    `json:"amount"`
-	EmbedData   string `json:"embed_data"`
-	Item        string `json:"item"`
-	ZPTransID   int64  `json:"zp_trans_id"`
-	ServerTime  int64  `json:"server_time"`
-	Channel     int    `json:"channel"`
+	AppID      int    `json:"app_id"`
+	AppTransID string `json:"app_trans_id"`
+	AppTime    int64  `json:"app_time"`
+	AppUser    string `json:"app_user"`
+	Amount     int    `json:"amount"`
+	EmbedData  string `json:"embed_data"`
+	Item       string `json:"item"`
+	ZPTransID  int64  `json:"zp_trans_id"`
+	ServerTime int64  `json:"server_time"`
+	Channel    int    `json:"channel"`
 }
 
 // EmbedData stored inside ZaloPay order.
 type EmbedData struct {
 	BookingID     string `json:"bookingId"`
 	MatchPlayerID string `json:"matchPlayerId,omitempty"`
+}
+
+// CreateOrderInput contains merchant order data for ZaloPay /v2/create.
+type CreateOrderInput struct {
+	AppTransID            string
+	Description           string
+	GuestName             string
+	GuestPhone            string
+	Amount                int
+	EmbedData             EmbedData
+	ExpireDurationSeconds int64
 }
 
 // QueryOrderResponse from ZaloPay /v2/query.
@@ -106,6 +120,7 @@ type QueryOrderResponse struct {
 	IsProcessing     bool   `json:"is_processing"`
 	Amount           int    `json:"amount"`
 	ZPTransID        int64  `json:"zp_trans_id"`
+	ServerTime       int64  `json:"server_time"`
 }
 
 // hmacSHA256 computes HMAC-SHA256.
@@ -134,40 +149,54 @@ func (c *Client) queryMAC(appTransID string) string {
 }
 
 // CreateOrder creates a ZaloPay order and returns the response.
-func (c *Client) CreateOrder(bookingID, appTransID, description, guestName, guestPhone string, amount int, embedData EmbedData) (*CreateOrderResponse, error) {
+func (c *Client) CreateOrder(ctx context.Context, input CreateOrderInput) (*CreateOrderResponse, error) {
 	appTime := time.Now().UnixMilli()
 
 	// Sanitize app_user (max 50 chars, alphanumeric + underscore)
-	appUser := sanitize(guestName+"_"+guestPhone, 50)
+	appUser := sanitize(input.GuestName+"_"+input.GuestPhone, 50)
+	if appUser == "" {
+		appUser = "smatch"
+	}
 
-	embedDataJSON, _ := json.Marshal(embedData)
+	embedDataJSON, _ := json.Marshal(input.EmbedData)
 	embedDataStr := string(embedDataJSON)
 	item := "[]"
 
-	mac := c.orderMAC(appTransID, appUser, amount, appTime, embedDataStr, item)
+	mac := c.orderMAC(input.AppTransID, appUser, input.Amount, appTime, embedDataStr, item)
 
 	req := CreateOrderRequest{
-		AppID:       c.cfg.AppID,
-		AppUser:     appUser,
-		AppTransID:  appTransID,
-		AppTime:     appTime,
-		Amount:      amount,
-		Item:        item,
-		Description: description,
-		EmbedData:   embedDataStr,
-		BankCode:    "",
-		MAC:         mac,
+		AppID:                 c.cfg.AppID,
+		AppUser:               appUser,
+		AppTransID:            input.AppTransID,
+		AppTime:               appTime,
+		ExpireDurationSeconds: input.ExpireDurationSeconds,
+		Amount:                input.Amount,
+		Item:                  item,
+		Description:           input.Description,
+		EmbedData:             embedDataStr,
+		BankCode:              "",
+		MAC:                   mac,
 	}
 	if c.cfg.CallbackURL != "" {
 		req.CallbackURL = c.cfg.CallbackURL
 	}
 
 	body, _ := json.Marshal(req)
-	resp, err := c.httpClient.Post(c.cfg.Endpoint+"/v2/create", "application/json", bytes.NewReader(body))
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.cfg.Endpoint+"/v2/create", bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("zalopay: create order request: %w", err)
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	resp, err := c.httpClient.Do(httpReq)
 	if err != nil {
 		return nil, fmt.Errorf("zalopay: create order: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func(Body io.ReadCloser) {
+		err := Body.Close()
+		if err != nil {
+			log.Fatalln("zalopay: Unable to close response body:", err)
+		}
+	}(resp.Body)
 
 	raw, _ := io.ReadAll(resp.Body)
 	var result CreateOrderResponse
@@ -201,18 +230,28 @@ func (c *Client) ExtractEmbedData(raw string) (*EmbedData, error) {
 }
 
 // QueryOrder queries a ZaloPay order status.
-func (c *Client) QueryOrder(appTransID string) (*QueryOrderResponse, error) {
+func (c *Client) QueryOrder(ctx context.Context, appTransID string) (*QueryOrderResponse, error) {
 	payload := map[string]interface{}{
 		"app_id":       c.cfg.AppID,
 		"app_trans_id": appTransID,
 		"mac":          c.queryMAC(appTransID),
 	}
 	body, _ := json.Marshal(payload)
-	resp, err := c.httpClient.Post(c.cfg.Endpoint+"/v2/query", "application/json", bytes.NewReader(body))
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.cfg.Endpoint+"/v2/query", bytes.NewReader(body))
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	httpReq.Header.Set("Content-Type", "application/json")
+	resp, err := c.httpClient.Do(httpReq)
+	if err != nil {
+		return nil, err
+	}
+	defer func(Body io.ReadCloser) {
+		err := Body.Close()
+		if err != nil {
+			log.Fatalln("zalopay: Unable to close response body:", err)
+		}
+	}(resp.Body)
 
 	raw, _ := io.ReadAll(resp.Body)
 	var result QueryOrderResponse

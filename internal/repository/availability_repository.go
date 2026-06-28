@@ -19,11 +19,12 @@ type RawSubCourt struct {
 
 // RawBooking is a minimal row for slot conflict checks.
 type RawBooking struct {
-	ID          string
-	SubCourtID  string
-	StartTime   string
-	EndTime     string
-	Status      string
+	ID         string
+	SubCourtID string
+	Date       string
+	StartTime  string
+	EndTime    string
+	Status     string
 }
 
 // RawPricingRule is a minimal row for price calculation.
@@ -38,10 +39,10 @@ type RawPricingRule struct {
 
 // RawClosure is a minimal row for slot closure checks.
 type RawClosure struct {
-	ID          string
-	SubCourtID  string
-	StartTime   *string // nil = full day
-	EndTime     *string
+	ID         string
+	SubCourtID string
+	StartTime  *string // nil = full day
+	EndTime    *string
 }
 
 // BookingRow is a full booking row with joined names.
@@ -300,6 +301,7 @@ func (r *AvailabilityRepository) GetBookingByID(ctx context.Context, id string) 
 func (r *AvailabilityRepository) GetBookingsByGroupID(ctx context.Context, groupID string) ([]*RawBooking, error) {
 	rows, err := r.db.Query(ctx, `
 		SELECT b.id, b.sub_court_id,
+		       TO_CHAR(b.date, 'YYYY-MM-DD'),
 		       TO_CHAR(b.start_time, 'HH24:MI'), TO_CHAR(b.end_time, 'HH24:MI'),
 		       b.status
 		FROM bookings b
@@ -313,7 +315,7 @@ func (r *AvailabilityRepository) GetBookingsByGroupID(ctx context.Context, group
 	var result []*RawBooking
 	for rows.Next() {
 		b := &RawBooking{}
-		if err := rows.Scan(&b.ID, &b.SubCourtID, &b.StartTime, &b.EndTime, &b.Status); err != nil {
+		if err := rows.Scan(&b.ID, &b.SubCourtID, &b.Date, &b.StartTime, &b.EndTime, &b.Status); err != nil {
 			return nil, err
 		}
 		result = append(result, b)
@@ -390,31 +392,12 @@ func (r *AvailabilityRepository) MarkCompletedBookings(ctx context.Context) (int
 
 // MarkExpiredPendingBookings marks old pending bookings as cancelled (scheduler).
 func (r *AvailabilityRepository) MarkExpiredPendingBookings(ctx context.Context, timeoutSec int) error {
-	tx, err := r.db.Begin(ctx)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback(ctx) //nolint:errcheck
-
-	_, err = tx.Exec(ctx, `
-		UPDATE payments SET status = 'failed', updated_at = NOW()
-		WHERE status = 'pending'
-		  AND created_at < NOW() - ($1 || ' seconds')::interval
-	`, strconv.Itoa(timeoutSec))
-	if err != nil {
-		return err
-	}
-
-	_, err = tx.Exec(ctx, `
+	_, err := r.db.Exec(ctx, `
 		UPDATE bookings SET status = 'cancelled', updated_at = NOW()
 		WHERE status = 'pending'
 		  AND created_at < NOW() - ($1 || ' seconds')::interval
 	`, strconv.Itoa(timeoutSec))
-	if err != nil {
-		return err
-	}
-
-	return tx.Commit(ctx)
+	return err
 }
 
 // LinkGuestBookings links guest bookings (by phone) to a user account.

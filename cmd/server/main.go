@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -16,6 +17,7 @@ import (
 
 	"github.com/smatch/badminton-backend/internal/config"
 	"github.com/smatch/badminton-backend/internal/handler"
+	"github.com/smatch/badminton-backend/internal/imageurl"
 	"github.com/smatch/badminton-backend/internal/middleware"
 	"github.com/smatch/badminton-backend/internal/repository"
 	"github.com/smatch/badminton-backend/internal/service"
@@ -42,6 +44,7 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
+	logger = logger.With(zap.String("service", "backend"))
 	defer logger.Sync() //nolint:errcheck
 
 	ctx := context.Background()
@@ -79,16 +82,47 @@ func main() {
 
 	// ── S3 ──────────────────────────────────────────────────────────────────
 	s3Client, err := s3pkg.New(ctx, s3pkg.Config{
-		Region:          cfg.AWS.Region,
-		AccessKeyID:     cfg.AWS.AccessKeyID,
-		SecretAccessKey: cfg.AWS.SecretAccessKey,
-		Endpoint:        cfg.AWS.Endpoint,
-		BucketProfile:   cfg.AWS.BucketProfile,
-		BucketMatches:   cfg.AWS.BucketMatches,
+		Region:             cfg.AWS.Region,
+		AccessKeyID:        cfg.AWS.AccessKeyID,
+		SecretAccessKey:    cfg.AWS.SecretAccessKey,
+		Endpoint:           cfg.AWS.Endpoint,
+		BucketProfile:      cfg.AWS.BucketProfile,
+		BucketMatches:      cfg.AWS.BucketMatches,
+		BucketBusinessDocs: cfg.AWS.BucketBusinessDocs,
 	})
 	if err != nil {
 		logger.Warn("s3 unavailable", zap.Error(err))
 	}
+	if s3Client != nil {
+		if err := s3Client.EnsureBuckets(ctx, cfg.AWS.BucketProfile, cfg.AWS.BucketMatches); err != nil {
+			logger.Warn("s3 bucket init failed", zap.Error(err))
+		}
+		if err := s3Client.EnsureBucketPublicRead(ctx, cfg.AWS.BucketProfile); err != nil {
+			logger.Warn("s3 public-read policy failed for profile bucket", zap.Error(err))
+		}
+		if err := s3Client.EnsureBucketPublicRead(ctx, cfg.AWS.BucketMatches); err != nil {
+			logger.Warn("s3 public-read policy failed for matches bucket", zap.Error(err))
+		}
+	}
+
+	// ── Image URL Resolver ──────────────────────────────────────────────────
+	matchesBase := cfg.AWS.PublicBaseURLMatches
+	if matchesBase == "" {
+		if cfg.AWS.Endpoint != "" {
+			matchesBase = strings.TrimRight(cfg.AWS.Endpoint, "/") + "/" + cfg.AWS.BucketMatches
+		} else {
+			matchesBase = fmt.Sprintf("https://%s.s3.%s.amazonaws.com", cfg.AWS.BucketMatches, cfg.AWS.Region)
+		}
+	}
+	profileBase := cfg.AWS.PublicBaseURLProfile
+	if profileBase == "" {
+		if cfg.AWS.Endpoint != "" {
+			profileBase = strings.TrimRight(cfg.AWS.Endpoint, "/") + "/" + cfg.AWS.BucketProfile
+		} else {
+			profileBase = fmt.Sprintf("https://%s.s3.%s.amazonaws.com", cfg.AWS.BucketProfile, cfg.AWS.Region)
+		}
+	}
+	imageResolver := imageurl.New(matchesBase, profileBase)
 
 	// ── ZaloPay ─────────────────────────────────────────────────────────────
 	zaloClient := zalopkg.New(zalopkg.Config{
@@ -110,15 +144,17 @@ func main() {
 	// ── Services ────────────────────────────────────────────────────────────
 	var redisSvc *service.RedisService
 	if redisClient != nil {
-		redisSvc = service.NewRedisService(redisClient, cfg.SlotLockTTLSec)
+		redisSvc = service.NewRedisService(redisClient, service.PaymentValiditySeconds)
 	}
 	availSvc := service.NewAvailabilityService(availRepo, courtRepo)
+	courtSvc := service.NewCourtService(courtRepo)
+	searchSvc := service.NewSearchService(redisSvc, searchRepo)
 
 	// ── WebSocket Hub ────────────────────────────────────────────────────────
 	hub := ws.NewHub(logger)
 
 	// ── Scheduler ───────────────────────────────────────────────────────────
-	scheduler := service.NewSchedulerService(logger, availRepo, paymentRepo, matchRepo, hub, cfg.SlotLockTTLSec)
+	scheduler := service.NewSchedulerService(logger, availRepo, paymentRepo, matchRepo, hub, zaloClient, redisSvc)
 	scheduler.Start()
 	defer scheduler.Stop()
 
@@ -126,20 +162,37 @@ func main() {
 	authMw := middleware.NewAuthMiddleware(fbClient, userRepo, cfg.AdminSecret)
 
 	// ── Handlers ────────────────────────────────────────────────────────────
-	authH := handler.NewAuthHandler(fbClient, userRepo, availRepo)
-	courtH := handler.NewCourtHandler(courtRepo)
-	availH := handler.NewAvailabilityHandler(availSvc)
-	matchH := handler.NewMatchHandler(matchRepo, redisSvc, hub)
-	paymentH := handler.NewPaymentHandler(paymentRepo, availRepo, matchRepo, redisSvc, zaloClient, hub,
-		cfg.SlotLockTTLSec, cfg.Port, cfg.NodeEnv)
-	searchH := handler.NewSearchHandler(redisSvc, searchRepo, courtRepo)
+	var matchUploadSvc *service.UploadService
+	var profileUploadSvc *service.UploadService
+	if s3Client != nil {
+		matchUploadSvc = service.NewUploadService(s3Client, cfg.AWS.BucketMatches)
+		profileUploadSvc = service.NewUploadService(s3Client, cfg.AWS.BucketProfile)
+	}
+
+	authSvc := service.NewAuthService(fbClient, userRepo, availRepo, profileUploadSvc, imageResolver)
+	paymentSvc := service.NewPaymentService(paymentRepo, availRepo, matchRepo, redisSvc, zaloClient, hub, logger)
+
+	authH := handler.NewAuthHandler(authSvc)
+	courtH := handler.NewCourtHandler(courtSvc)
+	availH := handler.NewAvailabilityHandler(availSvc, logger)
+	matchSvc := service.NewMatchService(matchRepo, redisSvc, hub, imageResolver)
+	matchH := handler.NewMatchHandler(matchSvc)
+	paymentH := handler.NewPaymentHandler(paymentSvc, logger,
+		cfg.PaymentWSTicketTTLSec, cfg.Port, cfg.NodeEnv)
+	searchH := handler.NewSearchHandler(searchSvc)
 	proxyH := handler.NewProxyHandler(cfg.TileServerURL, cfg.TileLayerID)
 	wsH := handler.NewWebSocketHandler(hub)
-
-	// S3 available for future image upload use
-	_ = s3Client
+	loadTestH := handler.NewLoadTestHandler(cfg.LoadTestStressEnabled, cfg.AdminSecret)
+	uploadH := handler.NewUploadHandler(matchUploadSvc, imageResolver)
 
 	// ── Wire payment auto-cancel on WS disconnect ────────────────────────────
+	hub.ValidatePaymentTicket = func(ctx context.Context, paymentID, ticket string) (bool, error) {
+		if redisSvc == nil {
+			return false, nil
+		}
+		return redisSvc.ConsumePaymentWSTicket(ctx, paymentID, ticket)
+	}
+	hub.PaymentStatusSnapshot = paymentH.PaymentStatusNotification
 	hub.OnPaymentDisconnect = func(paymentID string) {
 		bgCtx := context.Background()
 		paymentH.CancelPaymentByID(bgCtx, paymentID)
@@ -148,18 +201,34 @@ func main() {
 	// ── Router ──────────────────────────────────────────────────────────────
 	r := chi.NewRouter()
 
-	r.Use(chimiddleware.Recoverer)
 	r.Use(chimiddleware.RequestID)
 	r.Use(chimiddleware.RealIP)
+	r.Use(middleware.Recoverer(logger))
+	r.Use(middleware.RequestLogContext)
+	r.Use(middleware.RequestLogger(logger))
 	r.Use(chimiddleware.RequestSize(10 * 1024 * 1024))
-	r.Use(chimiddleware.Timeout(30 * time.Second))
+	r.Use(middleware.RequestTimeout(middleware.TimeoutConfig{
+		Fast:    time.Duration(cfg.HTTPTimeout.FastMS) * time.Millisecond,
+		Default: time.Duration(cfg.HTTPTimeout.DefaultSeconds) * time.Second,
+		Payment: time.Duration(cfg.HTTPTimeout.PaymentSeconds) * time.Second,
+	}, logger))
 	r.Use(cors.New(cors.Options{
 		AllowedOrigins: []string{"*"},
 		AllowedMethods: []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
 		AllowedHeaders: []string{"Authorization", "Content-Type", "X-Admin-Secret"},
 	}).Handler)
 	if redisClient != nil {
-		r.Use(httprate.LimitByIP(100, time.Minute))
+		limitByIP := httprate.LimitByIP(100, time.Minute)
+		r.Use(func(next http.Handler) http.Handler {
+			limited := limitByIP(next)
+			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if loadTestStressRateLimitBypass(r, cfg.LoadTestStressEnabled, cfg.AdminSecret) {
+					next.ServeHTTP(w, r)
+					return
+				}
+				limited.ServeHTTP(w, r)
+			})
+		})
 	}
 
 	// Health / version
@@ -167,6 +236,8 @@ func main() {
 		w.Header().Set("Content-Type", "application/json")
 		w.Write([]byte(`{"status":"ok"}`)) //nolint:errcheck
 	})
+
+	// Remove version path in prod
 	r.Get("/version", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Write([]byte(`{"version":"1.0.0","lang":"go"}`)) //nolint:errcheck
@@ -178,6 +249,7 @@ func main() {
 
 	// API routes
 	r.Route("/api", func(r chi.Router) {
+		r.Post("/load-test/stress", loadTestH.Stress)
 
 		// ── Auth ─────────────────────────────────────────────────────────
 		r.Route("/auth", func(r chi.Router) {
@@ -209,18 +281,17 @@ func main() {
 
 		// ── Bookings ──────────────────────────────────────────────────────
 		r.Route("/bookings", func(r chi.Router) {
-			r.With(authMw.RequireRegisteredUser).Post("/", availH.CreateBooking)
+			r.With(authMw.OptionalAuth).Post("/", availH.CreateBooking)
 			r.With(authMw.RequireAuth).Get("/{id}", availH.GetBooking)
 			r.With(authMw.RequireAuth).Delete("/{id}", availH.CancelBooking)
-			r.With(authMw.RequireAuth).Get("/{id}/payment", paymentH.GetBookingPayment)
+			r.With(authMw.OptionalAuth).Get("/{id}/payment", paymentH.GetBookingPayment)
 		})
 
 		// ── Payments ──────────────────────────────────────────────────────
 		r.Route("/payments", func(r chi.Router) {
-			r.With(authMw.RequireRegisteredUser).Post("/create", paymentH.CreatePayment)
+			r.With(authMw.OptionalAuth).Post("/create", paymentH.CreatePayment)
 			r.With(httprate.LimitByIP(10, time.Minute)).Post("/callback", paymentH.Callback)
 			r.With(authMw.RequireAuth).Get("/{id}", paymentH.GetPayment)
-			r.With(authMw.RequireAuth).Get("/{id}/status", paymentH.GetPaymentStatus)
 			r.With(authMw.RequireAuth).Post("/{id}/cancel", paymentH.CancelPayment)
 		})
 
@@ -246,6 +317,11 @@ func main() {
 			r.Get("/autocomplete", searchH.Autocomplete)
 			r.Get("/courts", searchH.SearchCourts)
 			r.Get("/popular", searchH.Popular)
+		})
+
+		// ── Uploads ───────────────────────────────────────────────────────
+		r.Route("/uploads", func(r chi.Router) {
+			r.With(authMw.RequireRegisteredUser).Post("/match-image", uploadH.UploadMatchImage)
 		})
 
 		// ── Admin ─────────────────────────────────────────────────────────
@@ -290,6 +366,14 @@ func main() {
 
 func intFromStr(s string) int {
 	n := 0
-	fmt.Sscanf(s, "%d", &n)
+	_, _ = fmt.Sscanf(s, "%d", &n)
 	return n
+}
+
+func loadTestStressRateLimitBypass(r *http.Request, enabled bool, adminSecret string) bool {
+	return enabled &&
+		adminSecret != "" &&
+		r.Method == http.MethodPost &&
+		r.URL.Path == "/api/load-test/stress" &&
+		r.Header.Get("X-Admin-Secret") == adminSecret
 }

@@ -5,33 +5,33 @@ import "time"
 type SkillLevel string
 
 const (
-	SkillLevelTBY         SkillLevel = "TBY"
-	SkillLevelY           SkillLevel = "Y"
-	SkillLevelYPlus       SkillLevel = "Y_PLUS"
-	SkillLevelYPlusPlus   SkillLevel = "Y_PLUS_PLUS"
-	SkillLevelTBK         SkillLevel = "TBK"
-	SkillLevelTB          SkillLevel = "TB"
-	SkillLevelTBPlus      SkillLevel = "TB_PLUS"
-	SkillLevelTBPlusPlus  SkillLevel = "TB_PLUS_PLUS"
-	SkillLevelK           SkillLevel = "K"
-	SkillLevelKPlus       SkillLevel = "K_PLUS"
-	SkillLevelGIOI        SkillLevel = "GIOI"
+	SkillLevelTBY        SkillLevel = "TBY"
+	SkillLevelY          SkillLevel = "Y"
+	SkillLevelYPlus      SkillLevel = "Y_PLUS"
+	SkillLevelYPlusPlus  SkillLevel = "Y_PLUS_PLUS"
+	SkillLevelTBK        SkillLevel = "TBK"
+	SkillLevelTB         SkillLevel = "TB"
+	SkillLevelTBPlus     SkillLevel = "TB_PLUS"
+	SkillLevelTBPlusPlus SkillLevel = "TB_PLUS_PLUS"
+	SkillLevelK          SkillLevel = "K"
+	SkillLevelKPlus      SkillLevel = "K_PLUS"
+	SkillLevelGIOI       SkillLevel = "GIOI"
 )
 
 type ShuttleType string
 
 const (
-	ShuttleTC77           ShuttleType = "TC77"
-	ShuttleBASAO          ShuttleType = "BASAO"
-	ShuttleYonexAS30      ShuttleType = "YONEX_AS30"
-	ShuttleYonexAS40      ShuttleType = "YONEX_AS40"
-	ShuttleYonexAS50      ShuttleType = "YONEX_AS50"
-	ShuttleVictorMaster1  ShuttleType = "VICTOR_MASTER_1"
-	ShuttleVictorChamp1   ShuttleType = "VICTOR_CHAMPION_1"
-	ShuttleRSLClassic     ShuttleType = "RSL_CLASSIC"
-	ShuttleLindan40       ShuttleType = "LINDAN_40"
-	ShuttleLindan50       ShuttleType = "LINDAN_50"
-	ShuttleOther          ShuttleType = "OTHER"
+	ShuttleTC77          ShuttleType = "TC77"
+	ShuttleBASAO         ShuttleType = "BASAO"
+	ShuttleYonexAS30     ShuttleType = "YONEX_AS30"
+	ShuttleYonexAS40     ShuttleType = "YONEX_AS40"
+	ShuttleYonexAS50     ShuttleType = "YONEX_AS50"
+	ShuttleVictorMaster1 ShuttleType = "VICTOR_MASTER_1"
+	ShuttleVictorChamp1  ShuttleType = "VICTOR_CHAMPION_1"
+	ShuttleRSLClassic    ShuttleType = "RSL_CLASSIC"
+	ShuttleLindan40      ShuttleType = "LINDAN_40"
+	ShuttleLindan50      ShuttleType = "LINDAN_50"
+	ShuttleOther         ShuttleType = "OTHER"
 )
 
 type PlayerFormat string
@@ -67,13 +67,13 @@ const (
 )
 
 type Match struct {
-	ID          string
-	CourtID     string
-	HostUserID  string
+	ID         string
+	CourtID    string
+	HostUserID string
 
-	Title        *string
-	Description  *string
-	Images       []string
+	Title       *string
+	Description *string
+	Images      []string
 
 	SkillLevel   SkillLevel
 	ShuttleType  ShuttleType
@@ -98,8 +98,8 @@ type MatchPlayer struct {
 	MatchID string
 	UserID  string
 
-	Status  MatchPlayerStatus
-	Message *string
+	Status   MatchPlayerStatus
+	Message  *string
 	Position *int
 
 	RequestedAt time.Time

@@ -2,6 +2,8 @@ package service
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/base64"
 	"fmt"
 	"strings"
 	"time"
@@ -17,8 +19,9 @@ const (
 	searchPopular        = "search:popular"
 	matchJoinQueuePrefix = "match:join:queue"
 	matchPlayerLock      = "match:player:lock"
+	paymentWSTicket      = "payment:ws:ticket"
 
-	searchCacheTTL  = 300  // seconds
+	searchCacheTTL   = 300   // seconds
 	searchPopularTTL = 86400 // seconds
 )
 
@@ -27,8 +30,8 @@ type RedisService struct {
 	ttlSec int
 }
 
-func NewRedisService(client *goredis.Client, slotLockTTL int) *RedisService {
-	return &RedisService{client: client, ttlSec: slotLockTTL}
+func NewRedisService(client *goredis.Client, ttlSec int) *RedisService {
+	return &RedisService{client: client, ttlSec: ttlSec}
 }
 
 func (s *RedisService) slotKey(subCourtID, date, startTime, endTime string) string {
@@ -59,7 +62,7 @@ func (s *RedisService) ReleaseSlotLock(ctx context.Context, subCourtID, date, st
 	return n == 1, err
 }
 
-// AcquireSlotLocks acquires multiple slot locks atomically (all-or-nothing).
+// SlotLockSpec AcquireSlotLocks acquires multiple slot locks atomically (all-or-nothing).
 type SlotLockSpec struct {
 	SubCourtID string
 	Date       string
@@ -91,6 +94,59 @@ func (s *RedisService) ReleaseSlotLocks(ctx context.Context, slots []SlotLockSpe
 	for _, slot := range slots {
 		s.ReleaseSlotLock(ctx, slot.SubCourtID, slot.Date, slot.StartTime, slot.EndTime, slot.BookingID) //nolint:errcheck
 	}
+}
+
+// --- Payment WebSocket Tickets ---
+
+func (s *RedisService) CreatePaymentWSTicket(ctx context.Context, paymentID string, ttl time.Duration) (string, error) {
+	if ttl <= 0 {
+		ttl = 60 * time.Second
+	}
+	for i := 0; i < 3; i++ {
+		ticket, err := randomURLToken(32)
+		if err != nil {
+			return "", err
+		}
+		ok, err := s.client.SetNX(ctx, paymentWSTicketKey(ticket), paymentID, ttl).Result()
+		if err != nil {
+			return "", err
+		}
+		if ok {
+			return ticket, nil
+		}
+	}
+	return "", fmt.Errorf("payment websocket ticket collision")
+}
+
+var consumePaymentWSTicketScript = goredis.NewScript(`
+local payment_id = redis.call("get", KEYS[1])
+if not payment_id then
+  return 0
+end
+if payment_id ~= ARGV[1] then
+  return 0
+end
+return redis.call("del", KEYS[1])
+`)
+
+func (s *RedisService) ConsumePaymentWSTicket(ctx context.Context, paymentID, ticket string) (bool, error) {
+	if paymentID == "" || ticket == "" {
+		return false, nil
+	}
+	n, err := consumePaymentWSTicketScript.Run(ctx, s.client, []string{paymentWSTicketKey(ticket)}, paymentID).Int()
+	return n == 1, err
+}
+
+func paymentWSTicketKey(ticket string) string {
+	return fmt.Sprintf("%s:%s", paymentWSTicket, ticket)
+}
+
+func randomURLToken(size int) (string, error) {
+	b := make([]byte, size)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(b), nil
 }
 
 // --- Autocomplete ---

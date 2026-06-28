@@ -177,6 +177,10 @@ resource "aws_security_group" "backend" {
     cidr_blocks = ["0.0.0.0/0"]
   }
 
+  lifecycle {
+    ignore_changes = [ingress]
+  }
+
   tags = { Name = "${var.app_name}-sg-backend" }
 }
 
@@ -201,6 +205,10 @@ resource "aws_security_group" "rds" {
     cidr_blocks = ["0.0.0.0/0"]
   }
 
+  lifecycle {
+    ignore_changes = [ingress]
+  }
+
   tags = { Name = "${var.app_name}-sg-rds" }
 }
 
@@ -223,6 +231,10 @@ resource "aws_security_group" "redis" {
     to_port     = 0
     protocol    = "-1"
     cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  lifecycle {
+    ignore_changes = [ingress]
   }
 
   tags = { Name = "${var.app_name}-sg-redis" }
@@ -252,16 +264,16 @@ resource "aws_security_group" "admin" {
   tags = { Name = "${var.app_name}-sg-admin" }
 }
 
-# pg_tileserv — allow traffic from ALB to nginx port
+# pg_tileserv — allow traffic from ALB directly to pg_tileserv
 resource "aws_security_group" "tileserv" {
   name        = "${var.app_name}-sg-tileserv"
-  description = "Allow inbound from ALB to tileserv nginx port"
+  description = "Allow inbound from ALB to pg_tileserv port"
   vpc_id      = aws_vpc.main.id
 
   ingress {
-    description     = "nginx tileserv"
-    from_port       = var.tileserv_nginx_port
-    to_port         = var.tileserv_nginx_port
+    description     = "pg_tileserv"
+    from_port       = var.tileserv_port
+    to_port         = var.tileserv_port
     protocol        = "tcp"
     security_groups = [aws_security_group.alb.id]
   }

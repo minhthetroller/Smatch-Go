@@ -12,22 +12,35 @@ import (
 	"github.com/smatch/badminton-backend/internal/repository"
 )
 
-// OpeningHours maps weekday abbreviation to "HH:MM-HH:MM".
-type OpeningHours struct {
-	Mon *string `json:"mon"`
-	Tue *string `json:"tue"`
-	Wed *string `json:"wed"`
-	Thu *string `json:"thu"`
-	Fri *string `json:"fri"`
-	Sat *string `json:"sat"`
-	Sun *string `json:"sun"`
-}
+// OpeningHours matches the JSON stored in the DB:
+// {"mon":"06:00-22:00","tue":"06:00-22:00",...,"sun":"06:00-23:00"}
+// Keys are lowercase 3-letter day abbreviations; values are "HH:MM-HH:MM" range strings.
+type OpeningHours map[string]string
 
 var dayNames = []string{"sun", "mon", "tue", "wed", "thu", "fri", "sat"}
 
 type AvailabilityService struct {
-	availRepo  *repository.AvailabilityRepository
-	courtRepo  *repository.CourtRepository
+	availRepo availabilityRepository
+	courtRepo courtRepository
+}
+
+type availabilityRepository interface {
+	GetSubCourtsByCourtID(ctx context.Context, courtID string) ([]*repository.RawSubCourt, error)
+	GetBookingsByCourtAndDate(ctx context.Context, courtID, date string) ([]*repository.RawBooking, error)
+	GetPricingRulesByCourtID(ctx context.Context, courtID string) ([]*repository.RawPricingRule, error)
+	GetClosuresByCourtAndDate(ctx context.Context, courtID, date string) ([]*repository.RawClosure, error)
+	IsHoliday(ctx context.Context, date string) (bool, error)
+	GetHolidayMultiplier(ctx context.Context, date string) (float64, error)
+	GetSubCourtWithCourt(ctx context.Context, subCourtID string) (*repository.RawSubCourt, error)
+	HasOverlappingBooking(ctx context.Context, subCourtID, date, startTime, endTime string) (bool, error)
+	CreateBookings(ctx context.Context, items []repository.CreateBookingItem, common repository.CreateBookingCommon) ([]string, error)
+	GetBookingByID(ctx context.Context, id string) (*repository.BookingRow, error)
+	UpdateBookingStatus(ctx context.Context, id, status string) error
+	GetUserBookings(ctx context.Context, userID string, page, limit int) ([]*repository.BookingRow, int, error)
+}
+
+type courtRepository interface {
+	FindByID(ctx context.Context, id string) (*domain.Court, error)
 }
 
 func NewAvailabilityService(ar *repository.AvailabilityRepository, cr *repository.CourtRepository) *AvailabilityService {
@@ -128,6 +141,9 @@ func (s *AvailabilityService) CreateBooking(ctx context.Context, req *dto.Create
 	var repoItems []repository.CreateBookingItem
 
 	for _, item := range items {
+		if _, err := uuid.Parse(item.SubCourtID); err != nil {
+			return nil, domain.BadRequest("Invalid subCourtId: must be a UUID")
+		}
 		if !isValidDate(item.Date) {
 			return nil, domain.BadRequest(fmt.Sprintf("Invalid date format: %s", item.Date))
 		}
@@ -355,7 +371,7 @@ func addMinutes(t string, mins int) string {
 
 func parseTime(t string) (int, int) {
 	var h, m int
-	fmt.Sscanf(t, "%d:%d", &h, &m)
+	_, _ = fmt.Sscanf(t, "%d:%d", &h, &m)
 	return h, m
 }
 
@@ -366,23 +382,14 @@ func minutesBetween(start, end string) int {
 }
 
 func ohForDay(oh *OpeningHours, day string) *string {
-	switch day {
-	case "mon":
-		return oh.Mon
-	case "tue":
-		return oh.Tue
-	case "wed":
-		return oh.Wed
-	case "thu":
-		return oh.Thu
-	case "fri":
-		return oh.Fri
-	case "sat":
-		return oh.Sat
-	case "sun":
-		return oh.Sun
+	if oh == nil {
+		return nil
 	}
-	return nil
+	hours, ok := (*oh)[day]
+	if !ok || hours == "" {
+		return nil
+	}
+	return &hours
 }
 
 func splitHours(s string) (string, string) {

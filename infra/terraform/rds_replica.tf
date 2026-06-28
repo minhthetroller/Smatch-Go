@@ -17,7 +17,7 @@ resource "aws_db_instance" "replica" {
 
 resource "aws_security_group" "rds_proxy" {
   name        = "${var.app_name}-sg-rds-proxy"
-  description = "Allow Postgres from tileserv instances to RDS Proxy"
+  description = "Allow Postgres from tileserv tasks to RDS Proxy"
   vpc_id      = aws_vpc.main.id
 
   ingress {

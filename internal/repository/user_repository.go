@@ -142,6 +142,45 @@ func (r *UserRepository) Delete(ctx context.Context, id string) error {
 	return err
 }
 
+// UpdateRoles updates the roles array for a user.
+func (r *UserRepository) UpdateRoles(ctx context.Context, id string, roles []string) error {
+	_, err := r.db.Exec(ctx, `
+		UPDATE users SET roles = $2, updated_at = NOW()
+		WHERE id = $1::uuid
+	`, id, roles)
+	return err
+}
+
+// HasRole checks if a user has a specific role.
+func (r *UserRepository) HasRole(ctx context.Context, id string, role string) (bool, error) {
+	var exists bool
+	err := r.db.QueryRow(ctx, `
+		SELECT EXISTS(
+			SELECT 1 FROM users
+			WHERE id = $1::uuid AND $2 = ANY(roles)
+		)
+	`, id, role).Scan(&exists)
+	return exists, err
+}
+
+// GetRoles returns the roles array for a user.
+func (r *UserRepository) GetRoles(ctx context.Context, id string) ([]string, error) {
+	var roles []string
+	rows, err := r.db.Query(ctx, `SELECT unnest(roles) FROM users WHERE id = $1::uuid`, id)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var r string
+		if err := rows.Scan(&r); err != nil {
+			return nil, err
+		}
+		roles = append(roles, r)
+	}
+	return roles, rows.Err()
+}
+
 func scanUser(row pgx.Row) (*domain.User, error) {
 	u := &domain.User{}
 	err := row.Scan(

@@ -184,26 +184,51 @@ CREATE INDEX IF NOT EXISTS "idx_payments_type"            ON "payments"("payment
 
 -- ==================== MATCHES ====================
 
-CREATE TYPE IF NOT EXISTS skill_level AS ENUM (
-    'TBY','Y','Y_PLUS','Y_PLUS_PLUS','TBK','TB','TB_PLUS','TB_PLUS_PLUS','K','K_PLUS','GIOI'
-);
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'skill_level') THEN
+        CREATE TYPE skill_level AS ENUM (
+            'TBY','Y','Y_PLUS','Y_PLUS_PLUS','TBK','TB','TB_PLUS','TB_PLUS_PLUS','K','K_PLUS','GIOI'
+        );
+    END IF;
+END $$;
 
-CREATE TYPE IF NOT EXISTS shuttle_type AS ENUM (
-    'TC77','BASAO','YONEX_AS30','YONEX_AS40','YONEX_AS50',
-    'VICTOR_MASTER_1','VICTOR_CHAMPION_1','RSL_CLASSIC','LINDAN_40','LINDAN_50','OTHER'
-);
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'shuttle_type') THEN
+        CREATE TYPE shuttle_type AS ENUM (
+            'TC77','BASAO','YONEX_AS30','YONEX_AS40','YONEX_AS50',
+            'VICTOR_MASTER_1','VICTOR_CHAMPION_1','RSL_CLASSIC','LINDAN_40','LINDAN_50','OTHER'
+        );
+    END IF;
+END $$;
 
-CREATE TYPE IF NOT EXISTS player_format AS ENUM (
-    'SINGLE_MALE','SINGLE_FEMALE','DOUBLE_MALE','DOUBLE_FEMALE','MIXED_DOUBLE','ANY'
-);
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'player_format') THEN
+        CREATE TYPE player_format AS ENUM (
+            'SINGLE_MALE','SINGLE_FEMALE','DOUBLE_MALE','DOUBLE_FEMALE','MIXED_DOUBLE','ANY'
+        );
+    END IF;
+END $$;
 
-CREATE TYPE IF NOT EXISTS match_status AS ENUM (
-    'OPEN','FULL','IN_PROGRESS','COMPLETED','CANCELLED'
-);
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'match_status') THEN
+        CREATE TYPE match_status AS ENUM (
+            'OPEN','FULL','IN_PROGRESS','COMPLETED','CANCELLED'
+        );
+    END IF;
+END $$;
 
-CREATE TYPE IF NOT EXISTS match_player_status AS ENUM (
-    'PENDING','PENDING_PAYMENT','ACCEPTED','REJECTED','LEFT','EXPIRED'
-);
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'match_player_status') THEN
+        CREATE TYPE match_player_status AS ENUM (
+            'PENDING','PENDING_PAYMENT','ACCEPTED','REJECTED','LEFT','EXPIRED'
+        );
+    END IF;
+END $$;
 
 CREATE TABLE IF NOT EXISTS "matches" (
     "id"            UUID              NOT NULL DEFAULT uuid_generate_v4(),
@@ -255,6 +280,11 @@ CREATE INDEX IF NOT EXISTS "idx_match_players_match_status" ON "match_players"("
 CREATE INDEX IF NOT EXISTS "idx_match_players_user_id"      ON "match_players"("user_id");
 
 -- Add match_player FK to payments (after match_players table exists)
-ALTER TABLE "payments"
-    ADD CONSTRAINT "payments_match_player_fkey"
-    FOREIGN KEY ("match_player_id") REFERENCES "match_players"("id") ON DELETE CASCADE;
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'payments_match_player_fkey') THEN
+        ALTER TABLE "payments"
+            ADD CONSTRAINT "payments_match_player_fkey"
+            FOREIGN KEY ("match_player_id") REFERENCES "match_players"("id") ON DELETE CASCADE;
+    END IF;
+END $$;

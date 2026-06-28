@@ -45,8 +45,8 @@ func TestIsValidTime(t *testing.T) {
 		{"06:00", true},
 		{"24:00", false},
 		{"12:60", false},
-		{"1:30", false},  // missing leading zero
-		{"12:5", false},  // missing leading zero
+		{"1:30", false}, // missing leading zero
+		{"12:5", false}, // missing leading zero
 		{"", false},
 		{"noon", false},
 		{"12:30:00", false}, // has seconds
@@ -178,24 +178,29 @@ func TestSplitHours(t *testing.T) {
 }
 
 func TestOhForDay(t *testing.T) {
-	mon := "06:00-22:00"
-	sat := "08:00-20:00"
+	weekdayStr := "06:00-22:00"
+	weekendStr := "08:00-20:00"
 	oh := &OpeningHours{
-		Mon: &mon,
-		Sat: &sat,
+		"mon": weekdayStr,
+		"tue": weekdayStr,
+		"wed": weekdayStr,
+		"thu": weekdayStr,
+		"fri": weekdayStr,
+		"sat": weekendStr,
+		"sun": weekendStr,
 	}
 
 	tests := []struct {
 		day  string
 		want *string
 	}{
-		{"mon", &mon},
-		{"tue", nil},
-		{"wed", nil},
-		{"thu", nil},
-		{"fri", nil},
-		{"sat", &sat},
-		{"sun", nil},
+		{"mon", &weekdayStr},
+		{"tue", &weekdayStr},
+		{"wed", &weekdayStr},
+		{"thu", &weekdayStr},
+		{"fri", &weekdayStr},
+		{"sat", &weekendStr},
+		{"sun", &weekendStr},
 		{"invalid", nil},
 	}
 

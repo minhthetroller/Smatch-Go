@@ -46,56 +46,56 @@ type RespondToJoinRequest struct {
 
 // MatchQueryParams from query string
 type MatchQueryParams struct {
-	CourtID      string
-	SkillLevel   string
-	PlayerFormat string
-	Status       string
-	Date         string
-	DateFrom     string
-	DateTo       string
+	CourtID        string
+	SkillLevel     string
+	PlayerFormat   string
+	Status         string
+	Date           string
+	DateFrom       string
+	DateTo         string
 	IncludeExpired bool
-	Page         int
-	Limit        int
+	Page           int
+	Limit          int
 }
 
 // MatchPlayerResponse nested in MatchWithPlayersResponse
 type MatchPlayerResponse struct {
-	ID          string  `json:"id"`
-	MatchID     string  `json:"matchId"`
-	UserID      string  `json:"userId"`
-	UserName    string  `json:"userName"`
+	ID           string  `json:"id"`
+	MatchID      string  `json:"matchId"`
+	UserID       string  `json:"userId"`
+	UserName     string  `json:"userName"`
 	UserPhotoURL *string `json:"userPhotoUrl"`
-	Status      string  `json:"status"`
-	Message     *string `json:"message"`
-	Position    *int    `json:"position"`
-	RequestedAt string  `json:"requestedAt"`
-	RespondedAt *string `json:"respondedAt"`
+	Status       string  `json:"status"`
+	Message      *string `json:"message"`
+	Position     *int    `json:"position"`
+	RequestedAt  string  `json:"requestedAt"`
+	RespondedAt  *string `json:"respondedAt"`
 }
 
 // MatchResponse sent to Flutter
 type MatchResponse struct {
-	ID           string  `json:"id"`
-	CourtID      string  `json:"courtId"`
-	CourtName    string  `json:"courtName"`
-	CourtAddress string  `json:"courtAddress"`
-	HostUserID   string  `json:"hostUserId"`
-	HostName     string  `json:"hostName"`
-	Title        *string `json:"title"`
-	Description  *string `json:"description"`
-	Images       []string `json:"images"`
-	SkillLevel   string  `json:"skillLevel"`
-	ShuttleType  string  `json:"shuttleType"`
-	PlayerFormat string  `json:"playerFormat"`
-	Date         string  `json:"date"`
-	StartTime    string  `json:"startTime"`
-	EndTime      string  `json:"endTime"`
-	IsPrivate    bool    `json:"isPrivate"`
-	Price        int     `json:"price"`
-	SlotsNeeded  int     `json:"slotsNeeded"`
-	SlotsAccepted int   `json:"slotsAccepted"`
-	Status       string  `json:"status"`
-	CreatedAt    string  `json:"createdAt"`
-	UpdatedAt    string  `json:"updatedAt"`
+	ID            string   `json:"id"`
+	CourtID       string   `json:"courtId"`
+	CourtName     string   `json:"courtName"`
+	CourtAddress  string   `json:"courtAddress"`
+	HostUserID    string   `json:"hostUserId"`
+	HostName      string   `json:"hostName"`
+	Title         *string  `json:"title"`
+	Description   *string  `json:"description"`
+	Images        []string `json:"images"`
+	SkillLevel    string   `json:"skillLevel"`
+	ShuttleType   string   `json:"shuttleType"`
+	PlayerFormat  string   `json:"playerFormat"`
+	Date          string   `json:"date"`
+	StartTime     string   `json:"startTime"`
+	EndTime       string   `json:"endTime"`
+	IsPrivate     bool     `json:"isPrivate"`
+	Price         int      `json:"price"`
+	SlotsNeeded   int      `json:"slotsNeeded"`
+	SlotsAccepted int      `json:"slotsAccepted"`
+	Status        string   `json:"status"`
+	CreatedAt     string   `json:"createdAt"`
+	UpdatedAt     string   `json:"updatedAt"`
 }
 
 // CurrentUserStatusResponse nested in MatchWithPlayersResponse
@@ -110,6 +110,6 @@ type CurrentUserStatusResponse struct {
 // MatchWithPlayersResponse sent to Flutter for match detail
 type MatchWithPlayersResponse struct {
 	MatchResponse
-	Players          []MatchPlayerResponse      `json:"players"`
+	Players           []MatchPlayerResponse      `json:"players"`
 	CurrentUserStatus *CurrentUserStatusResponse `json:"currentUserStatus"`
 }
